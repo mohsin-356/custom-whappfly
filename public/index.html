@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsBridge — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════ LOGIN SCREEN ═══════════════ -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="24" fill="#25D366"/>
+        <path d="M34.5 13.4C32.1 11 28.9 9.5 25.5 9.5C18.3 9.5 12.5 15.3 12.5 22.5C12.5 25 13.2 27.4 14.4 29.5L12.3 36.5L19.5 34.4C21.5 35.5 23.5 36.1 25.5 36.1C32.7 36.1 38.5 30.3 38.5 23.1C38.5 19.7 37.1 16.5 34.5 13.4ZM25.5 33.9C23.7 33.9 21.9 33.4 20.4 32.5L20 32.3L15.6 33.5L16.8 29.2L16.5 28.8C15.5 27.2 15 25.4 15 23.5C15 17.7 19.7 13 25.5 13C28.3 13 30.9 14.1 32.9 16C34.9 17.9 36 20.5 36 23.3C35.9 29.2 31.3 33.9 25.5 33.9ZM31.3 26C31 25.9 29.5 25.1 29.2 25C28.9 24.9 28.7 24.9 28.5 25.2C28.3 25.5 27.7 26.2 27.5 26.4C27.3 26.6 27.2 26.7 26.9 26.5C26.6 26.4 25.6 26.1 24.4 25C23.5 24.2 22.9 23.2 22.7 22.9C22.5 22.6 22.7 22.4 22.8 22.3C23 22.1 23.2 21.9 23.3 21.7C23.4 21.5 23.5 21.3 23.6 21.1C23.7 20.9 23.6 20.7 23.6 20.6C23.5 20.5 22.9 19 22.6 18.4C22.3 17.8 22.1 17.9 21.9 17.9H21.4C21.2 17.9 20.9 17.9 20.6 18.2C20.3 18.5 19.5 19.3 19.5 20.8C19.5 22.3 20.6 23.7 20.8 24C21 24.2 22.9 27.1 25.8 28.4C28.7 29.7 28.7 29.3 29.3 29.2C29.9 29.1 31.2 28.4 31.5 27.6C31.8 26.9 31.8 26.3 31.7 26.2C31.6 26.1 31.5 26.1 31.3 26Z" fill="white"/>
+      </svg>
+    </div>
+    <h1>WhatsBridge</h1>
+    <p class="login-subtitle">WhatsApp → n8n Bridge</p>
+    <form id="login-form">
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="login-password" placeholder="Enter dashboard password" autofocus />
+      </div>
+      <button type="submit" class="btn btn-primary btn-full" id="login-btn">
+        <span>Sign In</span>
+      </button>
+      <div id="login-error" class="error-msg" style="display:none"></div>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════ MAIN APP ═══════════════ -->
+<div id="app" class="app" style="display:none">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <svg width="32" height="32" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="24" fill="#25D366"/>
+        <path d="M34.5 13.4C32.1 11 28.9 9.5 25.5 9.5C18.3 9.5 12.5 15.3 12.5 22.5C12.5 25 13.2 27.4 14.4 29.5L12.3 36.5L19.5 34.4C21.5 35.5 23.5 36.1 25.5 36.1C32.7 36.1 38.5 30.3 38.5 23.1C38.5 19.7 37.1 16.5 34.5 13.4ZM25.5 33.9C23.7 33.9 21.9 33.4 20.4 32.5L20 32.3L15.6 33.5L16.8 29.2L16.5 28.8C15.5 27.2 15 25.4 15 23.5C15 17.7 19.7 13 25.5 13C28.3 13 30.9 14.1 32.9 16C34.9 17.9 36 20.5 36 23.3C35.9 29.2 31.3 33.9 25.5 33.9ZM31.3 26C31 25.9 29.5 25.1 29.2 25C28.9 24.9 28.7 24.9 28.5 25.2C28.3 25.5 27.7 26.2 27.5 26.4C27.3 26.6 27.2 26.7 26.9 26.5C26.6 26.4 25.6 26.1 24.4 25C23.5 24.2 22.9 23.2 22.7 22.9C22.5 22.6 22.7 22.4 22.8 22.3C23 22.1 23.2 21.9 23.3 21.7C23.4 21.5 23.5 21.3 23.6 21.1C23.7 20.9 23.6 20.7 23.6 20.6C23.5 20.5 22.9 19 22.6 18.4C22.3 17.8 22.1 17.9 21.9 17.9H21.4C21.2 17.9 20.9 17.9 20.6 18.2C20.3 18.5 19.5 19.3 19.5 20.8C19.5 22.3 20.6 23.7 20.8 24C21 24.2 22.9 27.1 25.8 28.4C28.7 29.7 28.7 29.3 29.3 29.2C29.9 29.1 31.2 28.4 31.5 27.6C31.8 26.9 31.8 26.3 31.7 26.2C31.6 26.1 31.5 26.1 31.3 26Z" fill="white"/>
+      </svg>
+      <span>WhatsBridge</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-page="overview">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Overview
+      </a>
+      <a href="#" class="nav-item" data-page="sessions">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Sessions
+      </a>
+      <a href="#" class="nav-item" data-page="webhook">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15,3 21,3 21,9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        Webhooks
+      </a>
+      <a href="#" class="nav-item" data-page="logs">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10,9 9,9 8,9"/></svg>
+        Logs
+      </a>
+      <a href="#" class="nav-item" data-page="settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="api-key-display">
+        <span class="api-key-label">API Key</span>
+        <span id="api-key-val" class="api-key-value">••••••••</span>
+        <button onclick="toggleApiKey()" class="icon-btn" title="Show/Hide">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <button onclick="handleLogout()" class="btn btn-ghost btn-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Logout
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main-content">
+
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <select id="session-selector" class="session-select" onchange="onSessionChange(this.value)">
+          <option value="">Select a session…</option>
+        </select>
+      </div>
+      <div class="topbar-right">
+        <div id="global-status-badge" class="status-badge status-disconnected">
+          <span class="status-dot"></span>
+          <span id="global-status-text">Disconnected</span>
+        </div>
+        <div class="topbar-time" id="topbar-time"></div>
+      </div>
+    </header>
+
+    <!-- ── Page: Overview ── -->
+    <section id="page-overview" class="page active">
+      <div class="page-header">
+        <h2>Overview</h2>
+        <button class="btn btn-primary btn-sm" onclick="showNewSessionModal()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Session
+        </button>
+      </div>
+
+      <!-- Connection panel -->
+      <div class="panel-grid panel-grid-2">
+        <!-- QR Card -->
+        <div class="card qr-card">
+          <div class="card-header">
+            <h3>Connection</h3>
+            <div id="connection-status-label" class="tag tag-gray">No Session</div>
+          </div>
+          <div class="card-body qr-body">
+            <div id="qr-container" class="qr-container">
+              <div class="qr-placeholder">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="5" y="5" width="3" height="3"/><rect x="16" y="5" width="3" height="3"/><rect x="5" y="16" width="3" height="3"/><path d="M14 14h3v3"/><path d="M17 17h3v3"/><path d="M14 17v3"/></svg>
+                <p>Select a session to see QR</p>
+              </div>
+              <img id="qr-image" src="" alt="QR Code" style="display:none" />
+            </div>
+            <div id="connected-info" class="connected-info" style="display:none">
+              <div class="avatar-ring">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              </div>
+              <div>
+                <div id="connected-name" class="connected-name">—</div>
+                <div id="connected-phone" class="connected-phone">—</div>
+              </div>
+            </div>
+          </div>
+          <div class="card-actions">
+            <button id="btn-connect" class="btn btn-primary" onclick="connectSession()">Connect</button>
+            <button id="btn-disconnect" class="btn btn-danger" style="display:none" onclick="disconnectSession()">Disconnect</button>
+            <button id="btn-restart" class="btn btn-secondary" onclick="restartSession()">Restart</button>
+            <button id="btn-logout" class="btn btn-ghost btn-sm" onclick="logoutSession()">Logout</button>
+          </div>
+        </div>
+
+        <!-- Info Card -->
+        <div class="card">
+          <div class="card-header"><h3>Session Info</h3></div>
+          <div class="card-body">
+            <div class="info-grid">
+              <div class="info-item"><span class="info-label">Session ID</span><span id="info-session-id" class="info-value mono">—</span></div>
+              <div class="info-item"><span class="info-label">Status</span><span id="info-status" class="info-value">—</span></div>
+              <div class="info-item"><span class="info-label">Phone</span><span id="info-phone" class="info-value">—</span></div>
+              <div class="info-item"><span class="info-label">Name</span><span id="info-name" class="info-value">—</span></div>
+              <div class="info-item"><span class="info-label">Connected At</span><span id="info-connected-at" class="info-value">—</span></div>
+              <div class="info-item"><span class="info-label">Last Seen</span><span id="info-last-seen" class="info-value">—</span></div>
+              <div class="info-item"><span class="info-label">Webhook Mode</span><span id="info-webhook-mode" class="info-value">—</span></div>
+              <div class="info-item"><span class="info-label">Webhook URL</span><span id="info-webhook-url" class="info-value url-text">—</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Metrics -->
+      <div class="panel-grid panel-grid-4" style="margin-top:1rem">
+        <div class="metric-card">
+          <div class="metric-icon metric-icon-green">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-val" id="metric-incoming">0</div>
+            <div class="metric-label">Incoming</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon metric-icon-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9 22,2"/></svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-val" id="metric-outgoing">0</div>
+            <div class="metric-label">Outgoing</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon metric-icon-purple">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15,3 21,3 21,9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-val" id="metric-webhook-sent">0</div>
+            <div class="metric-label">Webhook Sent</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon metric-icon-red">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-val" id="metric-webhook-failed">0</div>
+            <div class="metric-label">Webhook Failed</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live log stream -->
+      <div class="card" style="margin-top:1rem">
+        <div class="card-header">
+          <h3>Live Events</h3>
+          <button class="btn btn-ghost btn-sm" onclick="clearLiveLog()">Clear</button>
+        </div>
+        <div id="live-log" class="live-log"></div>
+      </div>
+    </section>
+
+    <!-- ── Page: Sessions ── -->
+    <section id="page-sessions" class="page">
+      <div class="page-header">
+        <h2>Sessions</h2>
+        <button class="btn btn-primary btn-sm" onclick="showNewSessionModal()">+ New Session</button>
+      </div>
+      <div id="sessions-table-wrap" class="card">
+        <table class="data-table">
+          <thead>
+            <tr><th>Label</th><th>Session ID</th><th>Phone</th><th>Status</th><th>Connected At</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="sessions-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Page: Webhooks ── -->
+    <section id="page-webhook" class="page">
+      <div class="page-header"><h2>Webhook Configuration</h2></div>
+      <div class="panel-grid panel-grid-1">
+        <div class="card">
+          <div class="card-header"><h3>Webhook Settings</h3><div id="wh-mode-badge" class="tag tag-blue">testing</div></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label>Testing URL</label>
+              <div class="input-row">
+                <input type="url" id="wh-test-url" placeholder="https://your-n8n.com/webhook/test/..." class="form-input" />
+                <button class="btn btn-secondary btn-sm" onclick="testWebhookUrl('test')">Test</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Production URL</label>
+              <div class="input-row">
+                <input type="url" id="wh-prod-url" placeholder="https://your-n8n.com/webhook/..." class="form-input" />
+                <button class="btn btn-secondary btn-sm" onclick="testWebhookUrl('prod')">Test</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label>Active Mode</label>
+                <select id="wh-mode" class="form-input">
+                  <option value="testing">Testing</option>
+                  <option value="production">Production</option>
+                </select>
+              </div>
+              <div class="form-group flex-1">
+                <label>Webhook Secret</label>
+                <input type="password" id="wh-secret" placeholder="Optional signing secret" class="form-input" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>
+                <input type="checkbox" id="wh-enabled" checked /> Webhook Enabled
+              </label>
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="btn btn-primary" onclick="saveWebhook()">Save Settings</button>
+            <button class="btn btn-danger" onclick="deleteWebhook()">Delete</button>
+          </div>
+        </div>
+
+        <!-- Webhook stats -->
+        <div class="card">
+          <div class="card-header"><h3>Delivery Stats</h3></div>
+          <div class="card-body">
+            <div class="panel-grid panel-grid-4">
+              <div class="metric-card compact"><div class="metric-val" id="wh-stat-sent">—</div><div class="metric-label">Total Sent</div></div>
+              <div class="metric-card compact"><div class="metric-val" id="wh-stat-failed">—</div><div class="metric-label">Failed</div></div>
+              <div class="metric-card compact"><div class="metric-val" id="wh-stat-last">—</div><div class="metric-label">Last Call</div></div>
+              <div class="metric-card compact"><div class="metric-val" id="wh-stat-last-success">—</div><div class="metric-label">Last Success</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Webhook logs -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Webhook Logs</h3>
+            <div class="header-actions">
+              <select id="wh-log-filter" class="form-input form-input-sm" onchange="loadWebhookLogs()">
+                <option value="">All</option>
+                <option value="true">Success</option>
+                <option value="false">Failed</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" onclick="loadWebhookLogs()">Refresh</button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <table class="data-table">
+              <thead><tr><th>Time</th><th>Event</th><th>Status</th><th>Response Time</th><th>Attempts</th></tr></thead>
+              <tbody id="wh-logs-tbody"></tbody>
+            </table>
+          </div>
+          <div class="card-footer" id="wh-logs-pagination"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Page: Logs ── -->
+    <section id="page-logs" class="page">
+      <div class="page-header">
+        <h2>Event Logs</h2>
+        <div class="header-actions">
+          <select id="log-direction-filter" class="form-input form-input-sm" onchange="loadEventLogs()">
+            <option value="">All</option>
+            <option value="incoming">Incoming</option>
+            <option value="outgoing">Outgoing</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="loadEventLogs()">Refresh</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body p-0">
+          <table class="data-table">
+            <thead><tr><th>Time</th><th>Direction</th><th>Event</th><th>Chat</th><th>Sender</th><th>Summary</th></tr></thead>
+            <tbody id="event-logs-tbody"></tbody>
+          </table>
+        </div>
+        <div class="card-footer" id="event-logs-pagination"></div>
+      </div>
+    </section>
+
+    <!-- ── Page: Settings ── -->
+    <section id="page-settings" class="page">
+      <div class="page-header"><h2>Settings</h2></div>
+      <div class="panel-grid panel-grid-1">
+        <div class="card">
+          <div class="card-header"><h3>API Access</h3></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label>API Key</label>
+              <div class="input-row">
+                <input type="text" id="settings-api-key" class="form-input mono" readonly />
+                <button class="btn btn-secondary btn-sm" onclick="copyApiKey()">Copy</button>
+              </div>
+              <small class="form-hint">Use this key in the <code>X-API-Key</code> header for all API calls.</small>
+            </div>
+            <div class="form-group">
+              <label>API Documentation</label>
+              <a href="/api/docs" target="_blank" class="btn btn-secondary btn-sm">Open Swagger Docs</a>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>System Status</h3></div>
+          <div class="card-body" id="system-status-body">
+            <div class="info-grid" id="system-info-grid"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ── New Session Modal ── -->
+<div id="modal-new-session" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>New Session</h3>
+      <button onclick="closeModal('modal-new-session')" class="icon-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Label (optional)</label>
+        <input type="text" id="new-session-label" class="form-input" placeholder="e.g. Main Number, Support Bot…" />
+      </div>
+      <div class="form-group">
+        <label>Session ID (optional)</label>
+        <input type="text" id="new-session-id" class="form-input" placeholder="Auto-generated if blank" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-new-session')">Cancel</button>
+      <button class="btn btn-primary" onclick="createSession()">Create & Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast notifications -->
+<div id="toast-container" class="toast-container"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

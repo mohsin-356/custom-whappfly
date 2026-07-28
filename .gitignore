@@ -1,0 +1,55 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Environment variables and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# WhatsApp / Baileys session data (CRITICAL: Do not leak auth creds)
+*session*/
+*.session.json
+baileys_auth_info/
+tokens/
+
+# Local logs and runtime dumps
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.eslintcache
+
+# Uploads and temporary media files
+src/uploads/
+dist/uploads/
+uploads/
+temp/
+tmp/
+
+# Build and production outputs
+dist/
+build/
+
+# Operating system files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDEs and text editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

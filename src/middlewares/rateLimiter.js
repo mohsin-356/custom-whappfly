@@ -9,6 +9,7 @@ const apiLimiter = rateLimit({
   max: config.rateLimit.max,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { success: false, message: 'Too many requests. Please slow down.' },
   skip: (req) => req.ip === '127.0.0.1' || req.ip === '::1',
 });
@@ -19,6 +20,7 @@ const authLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { success: false, message: 'Too many authentication attempts.' },
 });
 
@@ -28,6 +30,7 @@ const sendLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { success: false, message: 'Message send rate limit exceeded.' },
 });
 

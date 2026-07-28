@@ -6,9 +6,6 @@ const { requireAnyAuth, requireAuth } = require('../middlewares/auth');
 const { authLimiter } = require('../middlewares/rateLimiter');
 const { validateBody, schemas } = require('../middlewares/validator');
 
-// Auth (no auth required)
-router.post('/auth/login', authLimiter, validateBody(schemas.login), SessionController.login);
-
 // All routes below require authentication
 router.use(requireAnyAuth);
 

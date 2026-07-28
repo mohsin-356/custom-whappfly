@@ -56,7 +56,6 @@ const EventLogSchema = new mongoose.Schema(
     processedAt: {
       type: Date,
       default: Date.now,
-      index: true,
     },
   },
   {

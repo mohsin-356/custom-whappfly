@@ -9,10 +9,15 @@ const webhookRoutes = require('./webhookRoutes');
 const messageRoutes = require('./messageRoutes');
 const groupRoutes = require('./groupRoutes');
 const metricsRoutes = require('./metricsRoutes');
-const { apiLimiter } = require('../middlewares/rateLimiter');
+const SessionController = require('../controllers/SessionController');
+const { apiLimiter, authLimiter } = require('../middlewares/rateLimiter');
+const { validateBody, schemas } = require('../middlewares/validator');
 
 // Apply rate limiting to all API routes
 router.use(apiLimiter);
+
+// Public auth route
+router.post('/auth/login', authLimiter, validateBody(schemas.login), SessionController.login);
 
 // Mount route groups
 router.use('/sessions', sessionRoutes);

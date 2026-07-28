@@ -50,7 +50,6 @@ const WebhookLogSchema = new mongoose.Schema(
     triggeredAt: {
       type: Date,
       default: Date.now,
-      index: true,
     },
   },
   {

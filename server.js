@@ -42,7 +42,10 @@ async function bootstrap() {
   });
   initializeSocketManager(io);
 
-  // 5. Security middleware
+  // 5. Trust proxy (required for rate-limiter when behind reverse proxy / browser preview)
+  app.set('trust proxy', 1);
+
+  // 6. Security middleware
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -61,21 +64,21 @@ async function bootstrap() {
   app.use(cors(config.cors));
   app.use(compression());
 
-  // 6. Body parsers
+  // 7. Body parsers
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // 7. Static files
+  // 8. Static files
   app.use(express.static(path.join(__dirname, 'public')));
   app.use(
     '/uploads',
     express.static(path.join(__dirname, 'uploads'), { maxAge: '1d' })
   );
 
-  // 8. API routes
+  // 9. API routes
   app.use('/api', routes);
 
-  // 9. Dashboard SPA – serve index.html for all non-API routes
+  // 10. Dashboard SPA – serve index.html for all non-API routes
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
       return next();
@@ -83,17 +86,17 @@ async function bootstrap() {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   });
 
-  // 10. 404 & error handlers (must be last)
+  // 11. 404 & error handlers (must be last)
   app.use(notFoundHandler);
   app.use(errorHandler);
 
-  // 11. Initialize BullMQ queues
+  // 12. Initialize BullMQ queues
   await QueueService.initialize();
 
-  // 12. Restore sessions that were active before shutdown
+  // 13. Restore sessions that were active before shutdown
   await WhatsAppService.restoreActiveSessions();
 
-  // 13. Start server
+  // 14. Start server
   server.listen(config.port, () => {
     logger.info(`═══════════════════════════════════════`);
     logger.info(`  WhatsBridge started`);
@@ -104,7 +107,7 @@ async function bootstrap() {
     logger.info(`═══════════════════════════════════════`);
   });
 
-  // 14. Graceful shutdown
+  // 15. Graceful shutdown
   const shutdown = async (signal) => {
     logger.info(`${signal} received – shutting down gracefully...`);
     await WhatsAppService.disconnectAll();

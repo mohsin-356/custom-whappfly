@@ -7,7 +7,6 @@ const WebhookSchema = new mongoose.Schema(
     sessionId: {
       type: String,
       required: true,
-      index: true,
     },
     mode: {
       type: String,
