@@ -19,6 +19,10 @@ router.use(apiLimiter);
 // Public auth route
 router.post('/auth/login', authLimiter, validateBody(schemas.login), SessionController.login);
 
+// Public health check (must be before authenticated route groups)
+const MetricsController = require('../controllers/MetricsController');
+router.get('/status', MetricsController.status);
+
 // Mount route groups
 router.use('/sessions', sessionRoutes);
 router.use('/sessions/:sessionId/webhook', webhookRoutes);
