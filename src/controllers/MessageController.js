@@ -12,7 +12,13 @@ class MessageController {
    */
   async send(req, res, next) {
     try {
-      const { sessionId, to, message } = req.body;
+      // If authenticated via X-API-Token, sessionId is derived from the token automatically
+      const sessionId = req.sessionContext?.sessionId || req.body.sessionId;
+      const { to, message } = req.body;
+
+      if (!sessionId) {
+        return res.status(400).json({ success: false, message: 'sessionId is required' });
+      }
 
       if (!WhatsAppService.isConnected(sessionId)) {
         return res.status(400).json({
@@ -47,7 +53,7 @@ class MessageController {
    */
   async sendMedia(req, res, next) {
     try {
-      const sessionId = req.body.sessionId || req.query.sessionId;
+      const sessionId = req.sessionContext?.sessionId || req.body.sessionId || req.query.sessionId;
       const to = req.body.to;
       const type = req.body.type || 'document';
       const caption = req.body.caption || '';

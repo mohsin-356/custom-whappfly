@@ -14,6 +14,8 @@ const state = {
   webhookPage: 1,
   eventLogPage: 1,
   apiKeyVisible: false,
+  sessionApiToken: null,      // current session's X-API-Token (raw value)
+  tokenVisible: false,        // whether token is shown or masked
 };
 
 // ── Bootstrap ──────────────────────────────────────
@@ -286,6 +288,9 @@ async function selectSession(sessionId) {
         res.lastSeenAt ? new Date(res.lastSeenAt).toLocaleString() : '—';
     }
   } catch (_) {}
+
+  // Load per-session API token
+  loadSessionToken();
 
   // Load webhook info
   loadWebhookConfig(false);
@@ -677,6 +682,78 @@ function renderPagination(containerId, total, page, limit, onPageChange) {
   html += `<span class="page-info">${total} total</span>`;
   html += '</div>';
   el.innerHTML = html;
+}
+
+// ── X-API-Token ──────────────────────────────────────
+async function loadSessionToken() {
+  if (!state.currentSession) {
+    _renderToken(null);
+    return;
+  }
+  try {
+    const res = await apiFetch(`/api/sessions/${state.currentSession}/token`);
+    if (res.success) {
+      state.sessionApiToken = res.apiToken;
+      state.tokenVisible = false;
+      _renderToken(res.apiToken);
+      document.getElementById('btn-toggle-token').textContent = 'Show';
+    }
+  } catch (_) {
+    _renderToken(null);
+  }
+}
+
+function _renderToken(token) {
+  const el = document.getElementById('token-display');
+  if (!el) return;
+  if (!token) {
+    el.textContent = 'select a session to view token';
+    el.style.color = 'var(--text-muted)';
+    return;
+  }
+  el.style.color = 'var(--accent-blue)';
+  el.textContent = state.tokenVisible ? token : maskToken(token);
+}
+
+function maskToken(token) {
+  if (!token || token.length < 12) return '••••••••••••••••';
+  return token.slice(0, 6) + '••••••••••••••••••••••••••••••••••••••••••••••••' + token.slice(-4);
+}
+
+function toggleTokenVisibility() {
+  if (!state.sessionApiToken) return;
+  state.tokenVisible = !state.tokenVisible;
+  _renderToken(state.sessionApiToken);
+  document.getElementById('btn-toggle-token').textContent = state.tokenVisible ? 'Hide' : 'Show';
+}
+
+function copySessionToken() {
+  if (!state.sessionApiToken) return showToast('warn', 'No token loaded');
+  navigator.clipboard.writeText(state.sessionApiToken).then(() => {
+    showToast('success', 'X-API-Token copied to clipboard');
+  }).catch(() => {
+    showToast('error', 'Copy failed — check browser permissions');
+  });
+}
+
+async function rotateSessionToken() {
+  if (!state.currentSession) return showToast('warn', 'Select a session first');
+  if (!confirm('Rotate the API token for this session?\n\nThe old token will stop working immediately. Update your n8n credentials with the new token.')) return;
+
+  try {
+    const res = await apiFetch(`/api/sessions/${state.currentSession}/token/rotate`, { method: 'POST' });
+    if (res.success) {
+      state.sessionApiToken = res.apiToken;
+      state.tokenVisible = true;
+      _renderToken(res.apiToken);
+      document.getElementById('btn-toggle-token').textContent = 'Hide';
+      showToast('success', 'Token rotated — copy and update your n8n credentials');
+    } else {
+      showToast('error', res.message);
+    }
+  } catch (err) {
+    showToast('error', err.message);
+  }
 }
 
 // ── API Key ──────────────────────────────────────────

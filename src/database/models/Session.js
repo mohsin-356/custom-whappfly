@@ -63,6 +63,11 @@ const SessionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    apiToken: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
   },
   {
     timestamps: true,
@@ -85,6 +90,14 @@ SessionSchema.methods.toPublic = function () {
     lastSeenAt: this.lastSeenAt,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
+    hasToken: !!this.apiToken,
+  };
+};
+
+SessionSchema.methods.toPublicWithToken = function () {
+  return {
+    ...this.toPublic(),
+    apiToken: this.apiToken || null,
   };
 };
 

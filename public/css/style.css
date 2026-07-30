@@ -556,3 +556,57 @@ html, body {
 
 /* ── Misc ── */
 .empty-state { text-align: center; padding: 3rem; color: var(--text-muted); }
+
+/* ── X-API-Token Panel ── */
+.token-panel {
+  border-top: 1px solid var(--border);
+  padding: 0.9rem 1.25rem;
+  background: rgba(79,127,255,0.04);
+}
+
+.token-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.token-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.token-value-wrap {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+}
+
+.token-display {
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: var(--accent-blue);
+  word-break: break-all;
+  letter-spacing: 0.03em;
+}
+
+.token-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.token-hint code {
+  background: rgba(255,255,255,0.07);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  color: var(--accent-blue);
+}

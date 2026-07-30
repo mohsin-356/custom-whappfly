@@ -2,6 +2,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const Session = require('../database/models/Session');
+const { generateApiKey } = require('../utils/crypto');
 const logger = require('../utils/logger');
 
 class SessionServiceClass {
@@ -11,9 +12,18 @@ class SessionServiceClass {
   async create(sessionId, label = '') {
     const existing = await Session.findOne({ sessionId });
     if (existing) {
+      // Backfill token for sessions that pre-date this feature
+      if (!existing.apiToken) {
+        existing.apiToken = generateApiKey(32);
+        await existing.save();
+      }
       return existing;
     }
-    const session = new Session({ sessionId, label: label || sessionId });
+    const session = new Session({
+      sessionId,
+      label: label || sessionId,
+      apiToken: generateApiKey(32),
+    });
     await session.save();
     logger.info(`Session record created: ${sessionId}`);
     return session;
@@ -99,6 +109,29 @@ class SessionServiceClass {
   async delete(sessionId) {
     await Session.deleteOne({ sessionId });
     logger.info(`Session record deleted: ${sessionId}`);
+  }
+
+  /**
+   * Find a session by its per-session API token
+   */
+  async getByToken(token) {
+    if (!token) return null;
+    return Session.findOne({ apiToken: token });
+  }
+
+  /**
+   * Rotate (regenerate) a session's API token
+   */
+  async rotateToken(sessionId) {
+    const newToken = generateApiKey(32);
+    const session = await Session.findOneAndUpdate(
+      { sessionId },
+      { $set: { apiToken: newToken } },
+      { new: true }
+    );
+    if (!session) return null;
+    logger.info(`API token rotated for session: ${sessionId}`);
+    return session;
   }
 
   /**

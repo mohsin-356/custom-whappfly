@@ -149,9 +149,9 @@
         </div>
 
         <!-- Info Card -->
-        <div class="card">
+        <div class="card" style="display:flex;flex-direction:column">
           <div class="card-header"><h3>Session Info</h3></div>
-          <div class="card-body">
+          <div class="card-body" style="flex:1">
             <div class="info-grid">
               <div class="info-item"><span class="info-label">Session ID</span><span id="info-session-id" class="info-value mono">—</span></div>
               <div class="info-item"><span class="info-label">Status</span><span id="info-status" class="info-value">—</span></div>
@@ -162,6 +162,31 @@
               <div class="info-item"><span class="info-label">Webhook Mode</span><span id="info-webhook-mode" class="info-value">—</span></div>
               <div class="info-item"><span class="info-label">Webhook URL</span><span id="info-webhook-url" class="info-value url-text">—</span></div>
             </div>
+          </div>
+
+          <!-- X-API-Token panel -->
+          <div class="token-panel">
+            <div class="token-panel-header">
+              <span class="token-panel-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                X-API-Token <span class="tag tag-blue" style="font-size:0.65rem;margin-left:4px">n8n header</span>
+              </span>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-ghost btn-sm" onclick="toggleTokenVisibility()" id="btn-toggle-token">Show</button>
+                <button class="btn btn-ghost btn-sm" onclick="copySessionToken()" title="Copy token">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  Copy
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="rotateSessionToken()" title="Regenerate token">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                  Rotate
+                </button>
+              </div>
+            </div>
+            <div class="token-value-wrap">
+              <code id="token-display" class="token-display">select a session to view token</code>
+            </div>
+            <div class="token-hint">Add <code>X-API-Token</code> header in n8n HTTP Request node or Webhook credentials with this value.</div>
           </div>
         </div>
       </div>

@@ -23,4 +23,8 @@ router.post('/:sessionId/restart', SessionController.restart);
 router.delete('/:sessionId', SessionController.deleteSession);
 router.patch('/:sessionId/label', SessionController.updateLabel);
 
+// Per-session token management (view + rotate)
+router.get('/:sessionId/token', SessionController.getToken);
+router.post('/:sessionId/token/rotate', SessionController.rotateToken);
+
 module.exports = router;

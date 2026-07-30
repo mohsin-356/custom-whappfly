@@ -201,6 +201,51 @@ class SessionController {
       next(err);
     }
   }
+
+  /**
+   * GET /api/sessions/:sessionId/token
+   * Returns the per-session X-API-Token (requires JWT or global API key — not the session token itself)
+   */
+  async getToken(req, res, next) {
+    try {
+      const { sessionId } = req.params;
+      const session = await SessionService.getById(sessionId);
+      if (!session) {
+        return res.status(404).json({ success: false, message: 'Session not found' });
+      }
+      res.json({
+        success: true,
+        sessionId,
+        apiToken: session.apiToken || null,
+        hint: 'Use this token in the X-API-Token header for all API calls for this session.',
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * POST /api/sessions/:sessionId/token/rotate
+   * Generates a new token for the session, invalidating the old one
+   */
+  async rotateToken(req, res, next) {
+    try {
+      const { sessionId } = req.params;
+      const session = await SessionService.rotateToken(sessionId);
+      if (!session) {
+        return res.status(404).json({ success: false, message: 'Session not found' });
+      }
+      logger.info(`Token rotated for session ${sessionId} by user`);
+      res.json({
+        success: true,
+        sessionId,
+        apiToken: session.apiToken,
+        message: 'Token rotated successfully. Update your n8n credentials with the new token.',
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
 }
 
 module.exports = new SessionController();

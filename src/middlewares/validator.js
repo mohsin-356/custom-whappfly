@@ -78,7 +78,7 @@ const schemas = {
   }),
 
   sendMessage: Joi.object({
-    sessionId: Joi.string().required(),
+    sessionId: Joi.string().optional(),
     to: Joi.string().required(),
     message: Joi.object({
       type: Joi.string()
