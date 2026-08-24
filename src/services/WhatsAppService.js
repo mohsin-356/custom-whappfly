@@ -33,7 +33,7 @@ class WhatsAppServiceClass extends EventEmitter {
     super();
     // sessionId -> { socket, status, qr, info, reconnectAttempts, reconnectTimer, store }
     this.sessions = new Map();
-    this.MAX_RECONNECT_ATTEMPTS = 10;
+    this.MAX_RECONNECT_ATTEMPTS = Infinity;
     this.RECONNECT_BASE_DELAY = 3000;
   }
 
@@ -541,11 +541,11 @@ class WhatsAppServiceClass extends EventEmitter {
 
     const delay = Math.min(
       this.RECONNECT_BASE_DELAY * Math.pow(2, s.reconnectAttempts - 1),
-      60_000
+      300_000
     );
 
     logger.info(
-      `Reconnecting session ${sessionId} in ${delay}ms (attempt ${s.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`
+      `Reconnecting session ${sessionId} in ${delay}ms (attempt ${s.reconnectAttempts})`
     );
 
     getSocketManager().streamLog(
