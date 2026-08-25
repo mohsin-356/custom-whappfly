@@ -35,6 +35,27 @@ class WhatsAppServiceClass extends EventEmitter {
     this.sessions = new Map();
     this.MAX_RECONNECT_ATTEMPTS = Infinity;
     this.RECONNECT_BASE_DELAY = 3000;
+    this._startHealthMonitor();
+  }
+
+  _startHealthMonitor() {
+    // Every 3 minutes: check all sessions that should be connected
+    // If their WebSocket is not OPEN, schedule a reconnect automatically
+    setInterval(() => {
+      for (const [sessionId, s] of this.sessions) {
+        if (s.status !== SESSION_STATUS.CONNECTED) continue;
+        const wsState = s.socket?.ws?.readyState;
+        // WebSocket.OPEN = 1; anything else means the connection is gone
+        if (wsState !== undefined && wsState !== 1) {
+          logger.warn(`[HealthMonitor] Session ${sessionId} WebSocket not OPEN (state=${wsState}) — forcing reconnect`);
+          s.status = SESSION_STATUS.RECONNECTING;
+          getSocketManager().emitToSession(sessionId, 'status', { status: 'reconnecting', sessionId });
+          getSocketManager().streamLog(sessionId, 'warn', 'Health monitor detected dropped connection — reconnecting...');
+          SessionService.updateStatus(sessionId, 'reconnecting').catch(() => {});
+          this._scheduleReconnect(sessionId).catch(() => {});
+        }
+      }
+    }, 3 * 60 * 1000);
   }
 
   // ─────────────────────────────────────────────
@@ -330,17 +351,18 @@ class WhatsAppServiceClass extends EventEmitter {
     const isLoggedOut = statusCode === DisconnectReason.loggedOut;
     const isBadSession = statusCode === DisconnectReason.badSession;
 
-    logger.info(`Session ${sessionId} closed. Code: ${statusCode}, loggedOut: ${isLoggedOut}`);
+    logger.info(`Session ${sessionId} closed. Code: ${statusCode}, loggedOut: ${isLoggedOut}, badSession: ${isBadSession}`);
 
-    if (isLoggedOut || isBadSession) {
+    if (isLoggedOut) {
+      // ONLY wipe credentials on explicit WhatsApp logout (user removed device from phone)
       s.status = SESSION_STATUS.LOGGED_OUT;
       const sm = getSocketManager();
       sm.emitToSession(sessionId, 'status', {
         status: 'logged_out',
         sessionId,
-        message: isLoggedOut ? 'Logged out from WhatsApp' : 'Bad session – please reconnect',
+        message: 'Logged out from WhatsApp — please scan a new QR code',
       });
-      sm.streamLog(sessionId, 'warn', 'Session logged out.');
+      sm.streamLog(sessionId, 'warn', 'Session explicitly logged out from WhatsApp.');
 
       await SessionService.updateStatus(sessionId, 'logged_out');
       await this._cleanupSession(sessionId, true);
@@ -351,11 +373,16 @@ class WhatsAppServiceClass extends EventEmitter {
         timestamp: new Date().toISOString(),
       });
     } else {
+      // All other closes (badSession, timeout, network drop, Render restart, etc.)
+      // DO NOT delete auth files — reconnect using existing saved credentials
       s.status = SESSION_STATUS.RECONNECTING;
-      getSocketManager().emitToSession(sessionId, 'status', {
-        status: 'reconnecting',
-        sessionId,
-      });
+      const sm = getSocketManager();
+      sm.emitToSession(sessionId, 'status', { status: 'reconnecting', sessionId });
+      if (isBadSession) {
+        sm.streamLog(sessionId, 'warn', `Bad session signal (${statusCode}) — reconnecting without clearing credentials...`);
+      } else {
+        sm.streamLog(sessionId, 'warn', `Connection closed (code ${statusCode}) — reconnecting...`);
+      }
       await SessionService.updateStatus(sessionId, 'reconnecting');
       await this._scheduleReconnect(sessionId);
     }

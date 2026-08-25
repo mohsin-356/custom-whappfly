@@ -106,6 +106,15 @@ async function bootstrap() {
     logger.info(`  API Docs  : http://localhost:${config.port}/api/docs`);
     logger.info(`  Env       : ${config.nodeEnv}`);
     logger.info(`═══════════════════════════════════════`);
+
+    // Keep-alive self-ping every 14 minutes to prevent idle-sleep on Render / Railway etc.
+    // This creates real incoming HTTP traffic so the host doesn't spin down the service.
+    setInterval(() => {
+      http.get(`http://localhost:${config.port}/api/status`, (res) => {
+        res.resume();
+        logger.debug(`[KeepAlive] Self-ping OK (${res.statusCode})`);
+      }).on('error', () => {});
+    }, 14 * 60 * 1000);
   });
 
   // 15. Graceful shutdown
