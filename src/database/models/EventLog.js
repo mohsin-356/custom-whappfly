@@ -1,72 +1,85 @@
 'use strict';
 
-const mongoose = require('mongoose');
+const { getSupabase } = require('../connection');
 
-const EventLogSchema = new mongoose.Schema(
-  {
-    sessionId: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    direction: {
-      type: String,
-      enum: ['incoming', 'outgoing'],
-      required: true,
-      index: true,
-    },
-    eventType: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    messageId: {
-      type: String,
-      default: null,
-    },
-    chatId: {
-      type: String,
-      default: null,
-      index: true,
-    },
-    isGroup: {
-      type: Boolean,
-      default: false,
-    },
-    senderNumber: {
-      type: String,
-      default: null,
-    },
-    messageType: {
-      type: String,
-      default: null,
-    },
-    summary: {
-      type: String,
-      default: null,
-    },
-    payload: {
-      type: mongoose.Schema.Types.Mixed,
-      default: {},
-    },
-    error: {
-      type: String,
-      default: null,
-    },
-    processedAt: {
-      type: Date,
-      default: Date.now,
-    },
+const TABLE = 'event_logs';
+
+const keyMap = {
+  sessionId: 'session_id',
+  messageId: 'message_id',
+  chatId: 'chat_id',
+  isGroup: 'is_group',
+  senderNumber: 'sender_number',
+  messageType: 'message_type',
+  eventType: 'event_type',
+  processedAt: 'processed_at',
+};
+
+const EventLog = {
+  async create(doc) {
+    const sb = getSupabase();
+    const insert = {};
+    for (const [key, val] of Object.entries(doc)) {
+      const col = keyMap[key] || key;
+      insert[col] = val;
+    }
+    const { error } = await sb.from(TABLE).insert(insert);
+    if (error) throw error;
   },
-  {
-    collection: 'event_logs',
-    timestamps: true,
-  }
-);
 
-EventLogSchema.index({ sessionId: 1, processedAt: -1 });
-EventLogSchema.index({ sessionId: 1, direction: 1, processedAt: -1 });
-// TTL: remove event logs older than 7 days
-EventLogSchema.index({ processedAt: 1 }, { expireAfterSeconds: 604800 });
+  async countDocuments(query) {
+    const sb = getSupabase();
+    let q = sb.from(TABLE).select('id', { count: 'exact', head: true });
+    for (const [key, val] of Object.entries(query)) {
+      const col = keyMap[key] || key;
+      q = q.eq(col, val);
+    }
+    const { count, error } = await q;
+    if (error) throw error;
+    return count || 0;
+  },
 
-module.exports = mongoose.model('EventLog', EventLogSchema);
+  async find(query) {
+    const sb = getSupabase();
+    let q = sb.from(TABLE).select('*');
+    for (const [key, val] of Object.entries(query)) {
+      const col = keyMap[key] || key;
+      q = q.eq(col, val);
+    }
+    return {
+      _q: q,
+      _sort: null,
+      _skip: 0,
+      _limit: 0,
+      _select: null,
+      sort(field) {
+        const col = keyMap[field] || field;
+        this._sort = col;
+        return this;
+      },
+      skip(n) {
+        this._skip = n;
+        return this;
+      },
+      limit(n) {
+        this._limit = n;
+        return this;
+      },
+      select(fields) {
+        this._select = fields;
+        return this;
+      },
+      async then(resolve, reject) {
+        if (this._sort) q = q.order(this._sort, { ascending: false });
+        if (this._limit) q = q.limit(this._limit);
+        if (this._skip) q = q.range(this._skip, this._skip + (this._limit || 50) - 1);
+        if (this._select === '-payload') q = q.select('id,session_id,direction,event_type,message_id,chat_id,is_group,sender_number,message_type,summary,processed_at,created_at,updated_at');
+        const { data, error } = await q;
+        if (error) { reject(error); return; }
+        resolve(data || []);
+      },
+    };
+  },
+};
+
+module.exports = EventLog;

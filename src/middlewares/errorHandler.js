@@ -49,6 +49,23 @@ function errorHandler(err, req, res, next) {
     });
   }
 
+  // Supabase / PostgreSQL duplicate key error
+  if (err.code === '23505') {
+    const field = (err.details || '').match(/Key \(([^)]+)\)/)?.[1] || 'field';
+    return res.status(409).json({
+      success: false,
+      message: `Duplicate value for ${field}`,
+    });
+  }
+
+  // Supabase / PostgreSQL foreign key error
+  if (err.code === '23503') {
+    return res.status(400).json({
+      success: false,
+      message: 'Referenced record does not exist',
+    });
+  }
+
   // JWT errors
   if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
     return res.status(401).json({

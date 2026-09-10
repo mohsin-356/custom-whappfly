@@ -7,24 +7,23 @@ const logger = require('../utils/logger');
 
 class SessionServiceClass {
   /**
-   * Create a new session record in MongoDB
+   * Create a new session record in database
    */
   async create(sessionId, label = '') {
     const existing = await Session.findOne({ sessionId });
     if (existing) {
       // Backfill token for sessions that pre-date this feature
-      if (!existing.apiToken) {
-        existing.apiToken = generateApiKey(32);
-        await existing.save();
+      if (!existing.api_token) {
+        existing.api_token = generateApiKey(32);
+        await Session.updateOne({ sessionId }, { $set: { apiToken: existing.api_token } });
       }
       return existing;
     }
-    const session = new Session({
+    const session = await Session.create({
       sessionId,
       label: label || sessionId,
       apiToken: generateApiKey(32),
     });
-    await session.save();
     logger.info(`Session record created: ${sessionId}`);
     return session;
   }
@@ -42,7 +41,7 @@ class SessionServiceClass {
   async getAll(filters = {}) {
     const query = {};
     if (filters.status) query.status = filters.status;
-    return Session.find(query).sort({ createdAt: -1 });
+    return Session.find(query);
   }
 
   /**
@@ -145,12 +144,7 @@ class SessionServiceClass {
    * Count sessions by status
    */
   async countByStatus() {
-    const result = await Session.aggregate([
-      { $group: { _id: '$status', count: { $sum: 1 } } },
-    ]);
-    const counts = {};
-    for (const r of result) counts[r._id] = r.count;
-    return counts;
+    return Session.countByStatus();
   }
 }
 

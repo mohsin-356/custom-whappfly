@@ -8,7 +8,13 @@
     "dev": "nodemon server.js",
     "lint": "eslint src/"
   },
-  "keywords": ["whatsapp", "bridge", "n8n", "baileys", "webhook"],
+  "keywords": [
+    "whatsapp",
+    "bridge",
+    "n8n",
+    "baileys",
+    "webhook"
+  ],
   "author": "WhatsBridge",
   "license": "MIT",
   "engines": {
@@ -16,6 +22,7 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
+    "@supabase/supabase-js": "^2.116.0",
     "@whiskeysockets/baileys": "^6.7.16",
     "axios": "^1.7.2",
     "bcryptjs": "^2.4.3",
@@ -31,7 +38,6 @@
     "joi": "^17.13.1",
     "jsonwebtoken": "^9.0.2",
     "mime-types": "^2.1.35",
-    "mongoose": "^8.4.1",
     "multer": "^1.4.5-lts.1",
     "node-cache": "^5.1.2",
     "pino": "^9.2.0",

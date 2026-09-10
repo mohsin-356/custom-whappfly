@@ -11,13 +11,9 @@ const config = {
     baseUrl: process.env.BASE_URL || 'http://localhost:3000',
   },
 
-  mongodb: {
-    uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsbridge',
-    options: {
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    },
+  supabase: {
+    url: process.env.SUPABASE_URL || '',
+    serviceKey: process.env.SUPABASE_SERVICE_KEY || '',
   },
 
   redis: {

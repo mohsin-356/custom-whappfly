@@ -1,48 +1,42 @@
 'use strict';
 
-const mongoose = require('mongoose');
+const { createClient } = require('@supabase/supabase-js');
 const config = require('../config');
 const logger = require('../utils/logger');
 
+let supabase = null;
 let isConnected = false;
 
 async function connectDatabase() {
-  if (isConnected) return;
+  if (isConnected && supabase) return;
 
   try {
-    await mongoose.connect(config.mongodb.uri, config.mongodb.options);
+    supabase = createClient(config.supabase.url, config.supabase.serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    // Test the connection with a simple query
+    const { error } = await supabase.from('sessions').select('id').limit(1);
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
     isConnected = true;
-    logger.info('MongoDB connected successfully');
-
-    mongoose.connection.on('error', (err) => {
-      logger.error('MongoDB connection error:', { error: err.message });
-    });
-
-    mongoose.connection.on('disconnected', () => {
-      logger.warn('MongoDB disconnected. Attempting reconnect...');
-      isConnected = false;
-    });
-
-    mongoose.connection.on('reconnected', () => {
-      logger.info('MongoDB reconnected');
-      isConnected = true;
-    });
-
+    logger.info('Supabase connected successfully');
   } catch (err) {
-    logger.error('MongoDB initial connection failed:', { error: err.message });
-    // Retry after 5 seconds
-    logger.info('Retrying MongoDB connection in 5 seconds...');
+    logger.error('Supabase connection failed:', { error: err.message });
+    logger.info('Retrying Supabase connection in 5 seconds...');
     await new Promise((resolve) => setTimeout(resolve, 5000));
     return connectDatabase();
   }
 }
 
-function getConnection() {
-  return mongoose.connection;
+function getSupabase() {
+  return supabase;
 }
 
 function isConnectionReady() {
-  return isConnected && mongoose.connection.readyState === 1;
+  return isConnected && supabase !== null;
 }
 
-module.exports = { connectDatabase, getConnection, isConnectionReady };
+module.exports = { connectDatabase, getSupabase, isConnectionReady };
