@@ -13,7 +13,7 @@ const config = {
 
   supabase: {
     url: process.env.SUPABASE_URL || '',
-    serviceKey: process.env.SUPABASE_SERVICE_KEY || '',
+    serviceKey: process.env.SUPABASE_SECRET_KEY || '',
   },
 
   redis: {
