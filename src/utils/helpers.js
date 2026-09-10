@@ -24,6 +24,19 @@ async function ensureDirectories() {
       fs.mkdirSync(dir, { recursive: true });
     }
   }
+
+  // Clear old log files on startup to prevent disk-full (ENOSPC) crashes
+  try {
+    const logDir = config.logs.basePath;
+    if (fs.existsSync(logDir)) {
+      const files = fs.readdirSync(logDir);
+      for (const file of files) {
+        if (file.endsWith('.log')) {
+          fs.unlinkSync(path.join(logDir, file));
+        }
+      }
+    }
+  } catch (_) {}
 }
 
 /**

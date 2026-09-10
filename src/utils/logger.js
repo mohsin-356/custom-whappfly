@@ -32,21 +32,30 @@ const fileTransports = [
   new transports.DailyRotateFile({
     filename: path.join(config.logs.basePath, 'combined-%DATE%.log'),
     datePattern: 'YYYY-MM-DD',
-    maxFiles: `${config.logs.maxFiles}d`,
-    maxSize: config.logs.maxSize,
+    maxFiles: '3d',
+    maxSize: '5m',
     format: prodFormat,
     level: 'info',
+    handleExceptions: false,
   }),
   // Error logs only
   new transports.DailyRotateFile({
     filename: path.join(config.logs.basePath, 'error-%DATE%.log'),
     datePattern: 'YYYY-MM-DD',
-    maxFiles: `${config.logs.maxFiles}d`,
-    maxSize: config.logs.maxSize,
+    maxFiles: '3d',
+    maxSize: '5m',
     format: prodFormat,
     level: 'error',
+    handleExceptions: false,
   }),
 ];
+
+// Prevent file write errors (ENOSPC etc.) from crashing the process
+fileTransports.forEach((t) => {
+  t.on('error', (err) => {
+    console.error('[Logger] File transport error (non-fatal):', err.message);
+  });
+});
 
 const logger = createLogger({
   level: config.logs.level,
