@@ -7,6 +7,7 @@ const { jidToPhone, isGroupJid, isStatusJid, isBroadcastJid } = require('./helpe
  * Every incoming event is passed through this normalizer before being forwarded.
  */
 function normalizeMessage(rawMessage, sessionId, store) {
+  if (!rawMessage) return null;
   const { key, message, messageTimestamp, pushName, participant, broadcast } = rawMessage;
 
   if (!key || !message) return null;
@@ -27,11 +28,11 @@ function normalizeMessage(rawMessage, sessionId, store) {
     ? (key.participant || participant || '')
     : (key.fromMe ? (store?.state?.creds?.me?.id || '') : remoteJid);
 
-  const senderPhone = jidToPhone(senderJid);
-  const senderName = pushName || store?.contacts?.[senderJid]?.name || senderPhone;
+  const senderPhone = key.cleanedSenderPn || key.senderPn || jidToPhone(senderJid) || '';
+  const senderName = pushName || store?.contacts?.[senderJid]?.name || senderPhone || '';
 
   // Group metadata
-  const groupId = isGroup ? remoteJid : null;
+  const groupId = remoteJid;
   const groupName = store?.chats?.[remoteJid]?.name || null;
 
   // Message ID
@@ -43,7 +44,7 @@ function normalizeMessage(rawMessage, sessionId, store) {
   const ts = typeof messageTimestamp === 'object'
     ? messageTimestamp?.low || messageTimestamp?.toNumber?.() || Date.now() / 1000
     : (messageTimestamp || Date.now() / 1000);
-  const timestamp = new Date(ts * 1000).toISOString();
+  const timestamp = Math.floor(ts);
 
   // Context / Quoted message
   const contextInfo = content.contextInfo || message.extendedTextMessage?.contextInfo || null;
@@ -58,6 +59,7 @@ function normalizeMessage(rawMessage, sessionId, store) {
   const payload = {
     event: mapEventType(contentType),
     session_id: sessionId,
+    session: { id: sessionId },
     timestamp,
     message_id: messageId,
     chat_id: chatId,
@@ -70,7 +72,8 @@ function normalizeMessage(rawMessage, sessionId, store) {
     is_broadcast: isBroadcast,
     is_status: isStatus,
     is_from_me: key.fromMe || false,
-    message_type: contentType,
+    message_type: simplifyType(contentType),
+    message_body: null,
     quoted_message: quotedMessage,
     mentions,
     text: null,
@@ -145,10 +148,12 @@ function populateTypeFields(payload, contentType, content, message) {
   switch (contentType) {
     case 'conversation':
       payload.text = message.conversation || '';
+      payload.message_body = message.conversation || '';
       break;
 
     case 'extendedTextMessage':
       payload.text = content.text || '';
+      payload.message_body = content.text || '';
       if (content.matchedText) {
         payload.link_preview = {
           url: content.matchedText,
@@ -163,17 +168,21 @@ function populateTypeFields(payload, contentType, content, message) {
 
     case 'imageMessage':
       payload.caption = content.caption || null;
+      payload.message_body = content.caption || '';
       payload.mime_type = content.mimetype || 'image/jpeg';
       payload.file_size = content.fileLength?.low || content.fileLength || null;
       payload.width = content.width || null;
       payload.height = content.height || null;
       payload.media = {
         type: 'image',
-        url: null, // Filled after download
-        base64: null,
-        buffer: null,
+        url: content.url || null,
+        base64: '',
         mime: content.mimetype || 'image/jpeg',
-        sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
+        mimetype: content.mimetype || 'image/jpeg',
+        file_name: 'receipt.jpg',
+        filename: 'receipt.jpg',
+        file_sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
+        file_length: content.fileLength?.low || content.fileLength || null,
       };
       if (content.jpegThumbnail) {
         payload.thumbnail = `data:image/jpeg;base64,${Buffer.from(content.jpegThumbnail).toString('base64')}`;
@@ -182,6 +191,7 @@ function populateTypeFields(payload, contentType, content, message) {
 
     case 'videoMessage':
       payload.caption = content.caption || null;
+      payload.message_body = content.caption || '';
       payload.mime_type = content.mimetype || 'video/mp4';
       payload.file_size = content.fileLength?.low || content.fileLength || null;
       payload.width = content.width || null;
@@ -189,11 +199,14 @@ function populateTypeFields(payload, contentType, content, message) {
       payload.duration = content.seconds || null;
       payload.media = {
         type: 'video',
-        url: null,
-        base64: null,
-        buffer: null,
+        url: content.url || null,
+        base64: '',
         mime: content.mimetype || 'video/mp4',
-        sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
+        mimetype: content.mimetype || 'video/mp4',
+        file_name: 'video.mp4',
+        filename: 'video.mp4',
+        file_sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
+        file_length: content.fileLength?.low || content.fileLength || null,
         is_gif: content.gifPlayback || false,
       };
       if (content.jpegThumbnail) {
@@ -207,28 +220,34 @@ function populateTypeFields(payload, contentType, content, message) {
       payload.duration = content.seconds || null;
       payload.media = {
         type: content.ptt ? 'voice_note' : 'audio',
-        url: null,
-        base64: null,
-        buffer: null,
+        url: content.url || null,
+        base64: '',
         mime: content.mimetype || 'audio/ogg; codecs=opus',
+        mimetype: content.mimetype || 'audio/ogg; codecs=opus',
+        file_name: content.ptt ? 'voice_note.ogg' : 'audio.ogg',
+        filename: content.ptt ? 'voice_note.ogg' : 'audio.ogg',
+        file_sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
+        file_length: content.fileLength?.low || content.fileLength || null,
         ptt: content.ptt || false,
-        sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
       };
       break;
 
     case 'documentMessage':
       payload.caption = content.caption || null;
+      payload.message_body = content.caption || '';
       payload.mime_type = content.mimetype || 'application/octet-stream';
       payload.file_name = content.fileName || 'document';
       payload.file_size = content.fileLength?.low || content.fileLength || null;
       payload.media = {
         type: 'document',
-        url: null,
-        base64: null,
-        buffer: null,
+        url: content.url || null,
+        base64: '',
         mime: content.mimetype || 'application/octet-stream',
+        mimetype: content.mimetype || 'application/octet-stream',
         file_name: content.fileName || 'document',
-        sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
+        filename: content.fileName || 'document',
+        file_sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
+        file_length: content.fileLength?.low || content.fileLength || null,
       };
       if (content.jpegThumbnail) {
         payload.thumbnail = `data:image/jpeg;base64,${Buffer.from(content.jpegThumbnail).toString('base64')}`;
@@ -246,10 +265,14 @@ function populateTypeFields(payload, contentType, content, message) {
       };
       payload.media = {
         type: 'sticker',
-        url: null,
-        base64: null,
-        buffer: null,
+        url: content.url || null,
+        base64: '',
         mime: content.mimetype || 'image/webp',
+        mimetype: content.mimetype || 'image/webp',
+        file_name: 'sticker.webp',
+        filename: 'sticker.webp',
+        file_sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString('hex') : null,
+        file_length: content.fileLength?.low || content.fileLength || null,
       };
       break;
 
@@ -273,6 +296,7 @@ function populateTypeFields(payload, contentType, content, message) {
       payload.latitude = content.degreesLatitude || null;
       payload.longitude = content.degreesLongitude || null;
       payload.text = content.name || null;
+      payload.message_body = content.name || '';
       if (content.jpegThumbnail) {
         payload.thumbnail = `data:image/jpeg;base64,${Buffer.from(content.jpegThumbnail).toString('base64')}`;
       }
@@ -324,11 +348,13 @@ function populateTypeFields(payload, contentType, content, message) {
         payload.text = content.editedMessage?.conversation
           || content.editedMessage?.extendedTextMessage?.text
           || null;
+        payload.message_body = payload.text;
       }
       break;
 
     case 'buttonsMessage':
       payload.text = content.contentText || null;
+      payload.message_body = content.contentText || '';
       payload.caption = content.headerText || null;
       payload.buttons = (content.buttons || []).map((b) => ({
         id: b.buttonId || null,
@@ -339,6 +365,7 @@ function populateTypeFields(payload, contentType, content, message) {
 
     case 'buttonsResponseMessage':
       payload.text = content.selectedDisplayText || null;
+      payload.message_body = content.selectedDisplayText || '';
       payload.buttons = [{
         id: content.selectedButtonId || null,
         text: content.selectedDisplayText || null,
@@ -347,15 +374,18 @@ function populateTypeFields(payload, contentType, content, message) {
 
     case 'templateMessage':
       payload.text = content.hydratedTemplate?.hydratedContentText || null;
+      payload.message_body = content.hydratedTemplate?.hydratedContentText || '';
       break;
 
     case 'templateButtonReplyMessage':
       payload.text = content.selectedDisplayText || null;
+      payload.message_body = content.selectedDisplayText || '';
       payload.buttons = [{ id: content.selectedId || null, text: content.selectedDisplayText || null }];
       break;
 
     case 'listMessage':
       payload.text = content.description || null;
+      payload.message_body = content.description || '';
       payload.caption = content.title || null;
       payload.list = {
         title: content.title || null,
@@ -373,6 +403,7 @@ function populateTypeFields(payload, contentType, content, message) {
 
     case 'listResponseMessage':
       payload.text = content.title || null;
+      payload.message_body = content.title || '';
       payload.list = {
         row_id: content.singleSelectReply?.selectedRowId || null,
         title: content.title || null,
@@ -390,6 +421,38 @@ function populateTypeFields(payload, contentType, content, message) {
 /**
  * Normalize a quoted/replied-to message context
  */
+function simplifyType(contentType) {
+  const typeMap = {
+    conversation: 'text',
+    extendedTextMessage: 'text',
+    imageMessage: 'image',
+    videoMessage: 'video',
+    audioMessage: 'audio',
+    documentMessage: 'document',
+    stickerMessage: 'sticker',
+    contactMessage: 'contact',
+    contactsArrayMessage: 'contacts',
+    locationMessage: 'location',
+    liveLocationMessage: 'live_location',
+    pollCreationMessage: 'poll',
+    pollUpdateMessage: 'poll_update',
+    reactionMessage: 'reaction',
+    protocolMessage: 'protocol',
+    ephemeralMessage: 'ephemeral',
+    buttonsMessage: 'buttons',
+    buttonsResponseMessage: 'buttons_response',
+    templateMessage: 'template',
+    templateButtonReplyMessage: 'template_reply',
+    listMessage: 'list',
+    listResponseMessage: 'list_response',
+    orderMessage: 'order',
+    productMessage: 'product',
+    interactiveMessage: 'interactive',
+    interactiveResponseMessage: 'interactive_response',
+  };
+  return typeMap[contentType] || contentType;
+}
+
 function normalizeQuotedMessage(contextInfo) {
   if (!contextInfo?.quotedMessage) return null;
 
@@ -508,4 +571,5 @@ module.exports = {
   normalizeReceiptUpdate,
   getContentType,
   mapEventType,
+  simplifyType,
 };

@@ -177,7 +177,7 @@ async function _saveEventLog(sessionId, direction, payload) {
       isGroup: payload.is_group || false,
       senderNumber: payload.sender_number || null,
       messageType: payload.message_type || null,
-      summary: payload.text || payload.caption || payload.event || null,
+      summary: payload.message_body || payload.text || payload.caption || payload.event || null,
       payload,
     });
   } catch (err) {

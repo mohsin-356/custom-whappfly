@@ -27,9 +27,12 @@ class WebhookServiceClass {
         if (!webhook.eventFilters.includes(payload.event)) return;
       }
 
-      // Strip raw_event from payload to keep webhook payload clean (raw_event is huge)
+      // Strip raw_event and buffer from payload to keep webhook payload clean
       const cleanPayload = { ...payload };
       delete cleanPayload.raw_event;
+      if (cleanPayload.media) {
+        delete cleanPayload.media.buffer;
+      }
 
       await this.send(sessionId, url, cleanPayload, {
         webhookDoc: webhook,
@@ -185,11 +188,13 @@ class WebhookServiceClass {
    */
   async _saveLog(sessionId, url, eventType, payload, result) {
     try {
+      // Sanitize payload: truncate base64 data to prevent huge log entries
+      const sanitizedPayload = this._sanitizePayloadForLog(payload);
       await WebhookLog.create({
         sessionId,
         webhookUrl: url,
         eventType,
-        payload,
+        payload: sanitizedPayload,
         statusCode: result.statusCode,
         responseBody: result.responseBody ? result.responseBody.slice(0, 2000) : null,
         responseTime: result.responseTime,
@@ -199,6 +204,21 @@ class WebhookServiceClass {
       });
     } catch (err) {
       logger.error('Failed to save webhook log:', { error: err.message });
+    }
+  }
+
+  /**
+   * Sanitize payload for logging - truncate base64 media data
+   */
+  _sanitizePayloadForLog(payload) {
+    try {
+      const sanitized = JSON.parse(JSON.stringify(payload));
+      if (sanitized.media?.base64 && sanitized.media.base64.length > 100) {
+        sanitized.media.base64 = `[truncated:${sanitized.media.base64.length} chars]`;
+      }
+      return sanitized;
+    } catch (_) {
+      return payload;
     }
   }
 

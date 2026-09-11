@@ -36,8 +36,16 @@ class MediaServiceClass {
 
       // Attach to payload media object
       if (payload.media) {
-        payload.media.url = fileMeta.url;
+        payload.media.local_url = fileMeta.url;
         payload.media.base64 = bufferToBase64(buffer);
+        payload.media.mimetype = payload.media.mimetype || mimeType;
+        payload.media.mime = payload.media.mime || mimeType;
+        if (!payload.media.file_name || payload.media.file_name === 'receipt.jpg') {
+          payload.media.file_name = fileMeta.original_name || fileMeta.filename;
+        }
+        if (!payload.media.filename || payload.media.filename === 'receipt.jpg') {
+          payload.media.filename = fileMeta.original_name || fileMeta.filename;
+        }
         payload.media.size = fileMeta.size;
         payload.media.extension = fileMeta.extension;
         payload.media.sha256 = fileMeta.sha256;
