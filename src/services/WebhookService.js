@@ -275,16 +275,16 @@ class WebhookServiceClass {
    * Get webhook logs for a session
    */
   async getLogs(sessionId, filters = {}) {
-    const query = { sessionId };
-    if (filters.success !== undefined) query.success = filters.success;
-    if (filters.eventType) query.eventType = filters.eventType;
-
     const page = parseInt(filters.page || 1, 10);
     const limit = Math.min(parseInt(filters.limit || 50, 10), 200);
     const skip = (page - 1) * limit;
 
+    const query = { sessionId };
+    if (filters.success !== undefined) query.success = filters.success;
+    if (filters.eventType) query.eventType = filters.eventType;
+
     const [logs, total] = await Promise.all([
-      WebhookLog.find(query).sort({ triggeredAt: -1 }).skip(skip).limit(limit),
+      WebhookLog.find(query, { sort: 'triggeredAt', skip, limit }),
       WebhookLog.countDocuments(query),
     ]);
 

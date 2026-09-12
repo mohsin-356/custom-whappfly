@@ -131,11 +131,7 @@ class MessageController {
       const skip = (page - 1) * limit;
 
       const [logs, total] = await Promise.all([
-        EventLog.find(query)
-          .sort({ processedAt: -1 })
-          .skip(skip)
-          .limit(limit)
-          .select('-payload'), // exclude full payload for list view
+        EventLog.find(query, { sort: 'processedAt', skip, limit, select: '-payload' }),
         EventLog.countDocuments(query),
       ]);
 
