@@ -17,15 +17,26 @@ class WebhookServiceClass {
   async dispatch(sessionId, payload) {
     try {
       const webhook = await Webhook.findOne({ sessionId, enabled: true });
-      if (!webhook) return;
+      if (!webhook) {
+        logger.debug(`[WebhookService] No webhook config found for session ${sessionId}`);
+        return;
+      }
 
       const url = webhook.getActiveUrl();
-      if (!url) return;
+      if (!url) {
+        logger.debug(`[WebhookService] No active URL for session ${sessionId}, mode=${webhook.mode}`);
+        return;
+      }
 
       // Apply event filter if configured
       if (webhook.eventFilters && webhook.eventFilters.length > 0) {
-        if (!webhook.eventFilters.includes(payload.event)) return;
+        if (!webhook.eventFilters.includes(payload.event)) {
+          logger.info(`[WebhookService] Event "${payload.event}" filtered out for session ${sessionId}. Allowed: ${JSON.stringify(webhook.eventFilters)}`);
+          return;
+        }
       }
+
+      logger.info(`[WebhookService] Dispatching event "${payload.event}" to ${url} for session ${sessionId}`);
 
       // Strip raw_event and buffer from payload to keep webhook payload clean
       const cleanPayload = { ...payload };

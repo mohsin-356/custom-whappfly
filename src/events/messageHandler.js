@@ -25,7 +25,12 @@ async function handleUpsert(socket, sessionId, data, store) {
 
       // Normalize into our standard payload
       let payload = normalizeMessage(rawMsg, sessionId, store || {});
-      if (!payload) continue;
+      if (!payload) {
+        logger.info(`[messageHandler] normalizeMessage returned null for contentType=${contentType}, session=${sessionId}`);
+        continue;
+      }
+
+      logger.info(`[messageHandler] Normalized: event=${payload.event}, type=${payload.message_type}, session=${sessionId}, chat=${payload.chat_id}`);
 
       // Download media if present
       if (MediaService.isMediaMessage(contentType)) {
