@@ -19,6 +19,7 @@ const logger = require('./src/utils/logger');
 const { ensureDirectories } = require('./src/utils/helpers');
 const { WhatsAppService } = require('./src/services/WhatsAppService');
 const { QueueService } = require('./src/services/QueueService');
+const { cleanupExpiredMedia } = require('./src/utils/mediaHelper');
 
 async function bootstrap() {
   // 1. Ensure required directories exist
@@ -115,6 +116,17 @@ async function bootstrap() {
         logger.debug(`[KeepAlive] Self-ping OK (${res.statusCode})`);
       }).on('error', () => {});
     }, 14 * 60 * 1000);
+
+    // Periodically delete expired proxied/temp media (older than MEDIA_TEMP_TTL).
+    // Runs every hour; same TTL-based cleanup pattern used for session/log cleanup.
+    const mediaTtlMs = (config.media.tempTTL || 86400) * 1000;
+    const cleanupIntervalMs = Math.min(Math.max(Math.floor(mediaTtlMs / 4), 5 * 60 * 1000), 60 * 60 * 1000);
+    setInterval(() => {
+      cleanupExpiredMedia(config.media.tempTTL).catch((err) => {
+        logger.error('Media cleanup error:', { error: err.message });
+      });
+    }, cleanupIntervalMs);
+    logger.debug(`[MediaCleanup] Scheduled every ${Math.round(cleanupIntervalMs / 60000)} min (TTL=${config.media.tempTTL}s)`);
   });
 
   // 15. Graceful shutdown

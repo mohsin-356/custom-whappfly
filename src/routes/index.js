@@ -9,6 +9,7 @@ const webhookRoutes = require('./webhookRoutes');
 const messageRoutes = require('./messageRoutes');
 const groupRoutes = require('./groupRoutes');
 const metricsRoutes = require('./metricsRoutes');
+const mediaRoutes = require('./mediaRoutes');
 const SessionController = require('../controllers/SessionController');
 const { apiLimiter, authLimiter } = require('../middlewares/rateLimiter');
 const { validateBody, schemas } = require('../middlewares/validator');
@@ -29,6 +30,7 @@ router.use('/sessions/:sessionId/webhook', webhookRoutes);
 router.use('/', messageRoutes);
 router.use('/sessions/:sessionId', groupRoutes);
 router.use('/', metricsRoutes);
+router.use('/media', mediaRoutes);
 
 // Swagger documentation
 const swaggerOptions = {

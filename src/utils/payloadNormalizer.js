@@ -117,6 +117,7 @@ function mapEventType(contentType) {
     videoMessage: 'message.video',
     audioMessage: 'message.audio',
     documentMessage: 'message.document',
+    documentWithCaptionMessage: 'message.document',
     stickerMessage: 'message.sticker',
     contactMessage: 'message.contact',
     contactsArrayMessage: 'message.contacts',
@@ -253,6 +254,33 @@ function populateTypeFields(payload, contentType, content, message) {
         payload.thumbnail = `data:image/jpeg;base64,${Buffer.from(content.jpegThumbnail).toString('base64')}`;
       }
       break;
+
+    case 'documentWithCaptionMessage': {
+      // documentWithCaptionMessage is a FutureProofMessage wrapper:
+      // { message: { documentMessage: { ...same fields as documentMessage, incl. caption } } }
+      const innerMsg = content.message || {};
+      const doc = innerMsg.documentMessage || {};
+      payload.caption = doc.caption || null;
+      payload.message_body = doc.caption || '';
+      payload.mime_type = doc.mimetype || 'application/octet-stream';
+      payload.file_name = doc.fileName || 'document';
+      payload.file_size = doc.fileLength?.low || doc.fileLength || null;
+      payload.media = {
+        type: 'document',
+        url: doc.url || null,
+        base64: '',
+        mime: doc.mimetype || 'application/octet-stream',
+        mimetype: doc.mimetype || 'application/octet-stream',
+        file_name: doc.fileName || 'document',
+        filename: doc.fileName || 'document',
+        file_sha256: doc.fileSha256 ? Buffer.from(doc.fileSha256).toString('hex') : null,
+        file_length: doc.fileLength?.low || doc.fileLength || null,
+      };
+      if (doc.jpegThumbnail) {
+        payload.thumbnail = `data:image/jpeg;base64,${Buffer.from(doc.jpegThumbnail).toString('base64')}`;
+      }
+      break;
+    }
 
     case 'stickerMessage':
       payload.mime_type = content.mimetype || 'image/webp';
@@ -429,6 +457,7 @@ function simplifyType(contentType) {
     videoMessage: 'video',
     audioMessage: 'audio',
     documentMessage: 'document',
+    documentWithCaptionMessage: 'document',
     stickerMessage: 'sticker',
     contactMessage: 'contact',
     contactsArrayMessage: 'contacts',
