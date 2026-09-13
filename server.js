@@ -20,7 +20,7 @@ const { ensureDirectories } = require('./src/utils/helpers');
 const { WhatsAppService } = require('./src/services/WhatsAppService');
 const { QueueService } = require('./src/services/QueueService');
 const { cleanupExpiredMedia } = require('./src/utils/mediaHelper');
-
+ 
 async function bootstrap() {
   // 1. Ensure required directories exist
   await ensureDirectories();
