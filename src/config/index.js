@@ -49,6 +49,13 @@ const config = {
     tempTTL: parseInt(process.env.MEDIA_TEMP_TTL || '86400', 10),
   },
 
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'dewgf801n',
+    apiKey: process.env.CLOUDINARY_API_KEY || '',
+    apiSecret: process.env.CLOUDINARY_API_SECRET || 'wp1WXeb__b9Ty4hWqO2ALXzguy4',
+    url: process.env.CLOUDINARY_URL || '',
+  },
+
   logs: {
     basePath: path.resolve(process.env.LOGS_PATH || './logs'),
     level: process.env.LOG_LEVEL || 'info',

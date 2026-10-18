@@ -769,8 +769,24 @@ function copyApiKey() {
 }
 
 // ── Toast ────────────────────────────────────────────
-function showToast(type, message, duration = 4000) {
+// ── Toast ────────────────────────────────────────────
+function showToast(arg1, arg2, duration = 4000) {
+  let type = 'info';
+  let message = '';
+  const knownTypes = ['success', 'error', 'warning', 'warn', 'info'];
+
+  if (knownTypes.includes(String(arg1).toLowerCase())) {
+    type = String(arg1).toLowerCase() === 'warn' ? 'warning' : String(arg1).toLowerCase();
+    message = arg2 || '';
+  } else if (knownTypes.includes(String(arg2).toLowerCase())) {
+    type = String(arg2).toLowerCase() === 'warn' ? 'warning' : String(arg2).toLowerCase();
+    message = arg1 || '';
+  } else {
+    message = arg1 || '';
+  }
+
   const container = document.getElementById('toast-container');
+  if (!container) return;
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   toast.innerHTML = `<span class="toast-msg">${escHtml(message)}</span>`;

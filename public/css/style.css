@@ -610,3 +610,331 @@ html, body {
   font-size: 0.72rem;
   color: var(--accent-blue);
 }
+
+/* ═══════════════════════════════════════════════════
+   Bulk Messaging — Sub-tabs
+   ═══════════════════════════════════════════════════ */
+
+.bulk-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.25rem;
+}
+
+.bulk-tab {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 0.6rem 1.1rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.bulk-tab:hover { color: var(--text-primary); }
+
+.bulk-tab.active {
+  color: var(--wa-green);
+  border-bottom-color: var(--wa-green);
+}
+
+.bulk-tab-panel { display: none; }
+.bulk-tab-panel.active { display: block; }
+
+/* ═══════════════════════════════════════════════════
+   Bulk Messaging — Leads two-column layout
+   ═══════════════════════════════════════════════════ */
+
+.bulk-leads-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 1rem;
+  align-items: start;
+  min-height: 400px;
+}
+
+@media (max-width: 768px) {
+  .bulk-leads-layout { grid-template-columns: 1fr; }
+}
+
+.bulk-lists-panel,
+.bulk-contacts-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.bulk-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Lead list items */
+.lead-lists-ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.lead-list-item {
+  position: relative;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lead-list-item:last-child { border-bottom: none; }
+.lead-list-item:hover { background: var(--bg-hover); }
+.lead-list-item.active { background: rgba(37,211,102,.08); border-left: 3px solid var(--wa-green); }
+
+.ll-name { font-size: 0.875rem; font-weight: 500; color: var(--text-primary); }
+.ll-meta { font-size: 0.75rem; color: var(--text-muted); }
+
+.ll-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.lead-list-item:hover .ll-actions { opacity: 1; }
+
+/* CSV import result banner */
+.bulk-import-result {
+  margin: 0.75rem 1rem 0;
+  padding: 0.75rem 1rem;
+  background: rgba(34,197,94,.08);
+  border: 1px solid rgba(34,197,94,.25);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+/* Empty state */
+.empty-state {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* ═══════════════════════════════════════════════════
+   Bulk Messaging — Media row in message modal
+   ═══════════════════════════════════════════════════ */
+
+.bm-media-list { display: flex; flex-direction: column; gap: 8px; }
+
+.bm-media-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+.bm-media-row .form-input { flex: 1; }
+
+/* ═══════════════════════════════════════════════════
+   Bulk Messaging — Campaign progress bar
+   ═══════════════════════════════════════════════════ */
+
+.bulk-progress-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+  animation: fadeIn 0.3s ease;
+}
+
+.bulk-progress-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.bulk-progress-bar {
+  height: 10px;
+  background: var(--bg-secondary);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.bulk-progress-fill {
+  height: 100%;
+  background: var(--accent-blue);
+  border-radius: 99px;
+  transition: width 0.5s ease, background 0.3s;
+}
+
+.bulk-progress-stats {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* ═══════════════════════════════════════════════════
+   Extra tag colours used by bulk
+   ═══════════════════════════════════════════════════ */
+
+.tag-green   { background: rgba(34,197,94,.15);  color: #22c55e; }
+.tag-red     { background: rgba(239,68,68,.15);  color: #ef4444; }
+.tag-orange  { background: rgba(245,158,11,.15); color: #f59e0b; }
+.tag-gray    { background: rgba(100,116,139,.15); color: #94a3b8; }
+
+/* ═══════════════════════════════════════════════════
+   Bulk Messaging — Cloudinary Dropzone & Media UI
+   ═══════════════════════════════════════════════════ */
+
+.cloudinary-dropzone {
+  border: 2px dashed rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 1.25rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.cloudinary-dropzone:hover,
+.cloudinary-dropzone.dragover {
+  border-color: var(--wa-green);
+  background: rgba(37, 211, 102, 0.05);
+}
+
+.cloudinary-dropzone-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.cloudinary-icon {
+  font-size: 1.75rem;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+}
+
+.cloudinary-text {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.cloudinary-title {
+  color: var(--wa-green);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cloudinary-subtext {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.cloudinary-upload-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--wa-green);
+  padding: 0.5rem 0;
+}
+
+.spinner-sm {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: var(--wa-green);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.bm-media-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  transition: border-color 0.15s ease;
+}
+
+.bm-media-row:hover {
+  border-color: rgba(255,255,255,0.2);
+}
+
+.bm-media-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--border);
+  object-fit: cover;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.bm-media-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bm-media-link {
+  font-size: 0.75rem;
+  color: var(--accent-blue);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+.bm-media-link:hover {
+  text-decoration: underline;
+}
+
