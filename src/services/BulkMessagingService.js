@@ -8,7 +8,8 @@ const BulkCampaign = require('../database/models/BulkCampaign');
 const { getSocketManager } = require('../socket/SocketManager');
 
 // In-memory registry of running campaigns so we can cancel them
-const runningCampaigns = new Map();
+const runningCampaigns = new Map(); // campaignId -> { cancelled: boolean }
+const activeCampaignsBySession = new Map(); // sessionId -> campaignId
 
 class BulkMessagingServiceClass {
 
@@ -274,8 +275,35 @@ class BulkMessagingServiceClass {
       this.getLeadList(listId, sessionId),
     ]);
 
+    // Prevent duplicate concurrent campaigns running for the same session
+    const activeCampaignId = activeCampaignsBySession.get(sessionId);
+    if (activeCampaignId && runningCampaigns.has(activeCampaignId)) {
+      const err = new Error('A campaign is already running for this session. Please wait for it to complete or cancel it before starting another.');
+      err.status = 409;
+      err.code = 'CAMPAIGN_ALREADY_RUNNING';
+      throw err;
+    }
+
     // Get the WhatsApp socket — session must be connected
     const { WhatsAppService } = require('./WhatsAppService');
+    if (!WhatsAppService.isConnected(sessionId)) {
+      // Auto-reconnect attempt if auth files exist on disk
+      try {
+        const path = require('path');
+        const fs = require('fs');
+        const config = require('../config');
+        const sessionPath = path.join(config.session.basePath, sessionId);
+        if (fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 0) {
+          const sObj = await require('./SessionService').SessionService.getById(sessionId);
+          await WhatsAppService.createSession(sessionId, sObj?.label || sessionId);
+          for (let i = 0; i < 6; i++) {
+            await _sleep(500);
+            if (WhatsAppService.isConnected(sessionId)) break;
+          }
+        }
+      } catch (_) {}
+    }
+
     if (!WhatsAppService.isConnected(sessionId)) {
       const rtStatus = WhatsAppService.getSessionStatus(sessionId);
       const isQr = rtStatus?.status === 'qr_ready';
@@ -294,22 +322,25 @@ class BulkMessagingServiceClass {
       throw Object.assign(new Error('The selected lead list has no contacts'), { status: 400 });
     }
 
-    // Reset lead statuses for a fresh run
+    // Reset lead statuses for a fresh rerun
     await BulkLead.resetListStatuses(listId);
+
+    const safeDelay = Math.max(1200, delayMs || 1500);
 
     const campaign = await BulkCampaign.create({
       sessionId,
       messageId,
       listId,
       title: title || `${message.title} → ${leadList.name}`,
-      delayMs: Math.max(500, delayMs),
+      delayMs: safeDelay,
       total: leads.length,
     });
 
     await BulkCampaign.updateStatus(campaign.id, 'running', { total: leads.length });
+    activeCampaignsBySession.set(sessionId, campaign.id);
 
     // Run asynchronously
-    this._runCampaign(campaign.id, sessionId, message, leads, Math.max(500, delayMs)).catch((err) => {
+    this._runCampaign(campaign.id, sessionId, message, leads, safeDelay).catch((err) => {
       logger.error(`[BulkMessaging] Campaign ${campaign.id} crashed:`, { error: err.message });
     });
 
@@ -318,18 +349,22 @@ class BulkMessagingServiceClass {
 
   async cancelCampaign(campaignId, sessionId) {
     const campaign = await this.getCampaign(campaignId, sessionId);
-    if (campaign.status !== 'running') {
+    if (campaign.status !== 'running' && !runningCampaigns.has(campaignId)) {
       throw Object.assign(new Error('Campaign is not running'), { status: 409 });
     }
     const ctrl = runningCampaigns.get(campaignId);
     if (ctrl) ctrl.cancelled = true;
+    runningCampaigns.delete(campaignId);
+    if (activeCampaignsBySession.get(sessionId) === campaignId) {
+      activeCampaignsBySession.delete(sessionId);
+    }
     await BulkCampaign.updateStatus(campaignId, 'cancelled');
     return { success: true, message: 'Campaign cancellation requested' };
   }
 
   async deleteCampaign(campaignId, sessionId) {
     const campaign = await this.getCampaign(campaignId, sessionId);
-    if (campaign.status === 'running') {
+    if (campaign.status === 'running' || runningCampaigns.has(campaignId)) {
       throw Object.assign(new Error('Cannot delete a running campaign. Cancel it first.'), { status: 409 });
     }
     await BulkCampaign.deleteOne(campaignId, sessionId);
@@ -342,6 +377,7 @@ class BulkMessagingServiceClass {
   async _runCampaign(campaignId, sessionId, message, leads, delayMs) {
     const ctrl = { cancelled: false };
     runningCampaigns.set(campaignId, ctrl);
+    activeCampaignsBySession.set(sessionId, campaignId);
 
     const { WhatsAppService } = require('./WhatsAppService');
     const sm = getSocketManager();
@@ -359,6 +395,10 @@ class BulkMessagingServiceClass {
       });
     };
 
+    // Determine country prefix from session phone if available (e.g. 92)
+    const sessionPhone = WhatsAppService.getSessionStatus(sessionId)?.info?.phone || '';
+    const fallbackPrefix = sessionPhone ? sessionPhone.slice(0, 2) : '92';
+
     try {
       for (const lead of leads) {
         if (ctrl.cancelled) {
@@ -370,69 +410,90 @@ class BulkMessagingServiceClass {
           // Session dropped mid-campaign
           failed++;
           await BulkLead.updateStatus(lead.id, 'failed', 'Session disconnected');
+          emitProgress();
+          continue;
+        }
+
+        const rawPhone = lead.phone_number;
+        const targetJid = _formatWhatsAppJid(rawPhone, fallbackPrefix);
+
+        if (!targetJid) {
+          skipped++;
+          await BulkLead.updateStatus(lead.id, 'skipped', 'Invalid phone number format');
+          emitProgress();
           continue;
         }
 
         try {
-          const socket = WhatsAppService.getSocket(sessionId);
-          const phone  = lead.phone_number;
-          const jid    = phone.includes('@') ? phone
-            : (phone.startsWith('+') ? phone.slice(1) : phone) + '@s.whatsapp.net';
+          const mediaItems = Array.isArray(message.media) ? message.media : [];
+          const hasBodyText = !!(message.body_text && message.body_text.trim());
 
-          // Check if number exists on WhatsApp
-          let isOnWhatsApp = false;
-          try {
-            const [result] = await socket.onWhatsApp(phone.replace(/\D/g, ''));
-            isOnWhatsApp = result?.exists || false;
-          } catch (_) {
-            isOnWhatsApp = true; // assume yes on error to avoid skipping valid numbers
-          }
-
-          if (!isOnWhatsApp) {
-            skipped++;
-            await BulkLead.updateStatus(lead.id, 'skipped', 'Not on WhatsApp');
-            emitProgress();
-            continue;
-          }
-
-          // Save contact on the device if not already there
-          try {
-            await socket.upsertContacts([{ notify: lead.contact_name, id: jid }]);
-          } catch (_) { /* non-critical */ }
-
-          // Send text body
-          if (message.body_text && message.body_text.trim()) {
-            await WhatsAppService.sendMessage(sessionId, phone, {
-              type: 'text',
-              text: message.body_text,
-            });
-          }
-
-          // Send media attachments sequentially
-          const mediaItems = message.media || [];
-          for (const item of mediaItems) {
-            if (ctrl.cancelled) break;
-            const msgPayload = _buildMediaPayload(item);
-            if (msgPayload) {
-              await WhatsAppService.sendMessage(sessionId, phone, msgPayload);
-              await _sleep(300); // tiny gap between media items
+          if (mediaItems.length === 1) {
+            // SINGLE MEDIA ATTACHMENT:
+            // Send as 1 combined WhatsApp message with body_text as caption
+            // This prevents Signal ratchet desync and eliminates "Waiting for this message"
+            const item = mediaItems[0];
+            const payload = _buildMediaPayload(item);
+            if (payload) {
+              if (hasBodyText) {
+                payload.caption = message.body_text.trim();
+              }
+              await WhatsAppService.sendMessage(sessionId, targetJid, payload);
+            } else if (hasBodyText) {
+              await WhatsAppService.sendMessage(sessionId, targetJid, {
+                type: 'text',
+                text: message.body_text.trim(),
+              });
+            }
+          } else if (mediaItems.length > 1) {
+            // MULTIPLE MEDIA ATTACHMENTS:
+            // If body text present, send text first
+            if (hasBodyText) {
+              await WhatsAppService.sendMessage(sessionId, targetJid, {
+                type: 'text',
+                text: message.body_text.trim(),
+              });
+              // Safe gap between text and media for Signal ratchet sync
+              await _sleep(2000);
+            }
+            // Send each media item with a 1500ms safe interval
+            for (let mIdx = 0; mIdx < mediaItems.length; mIdx++) {
+              if (ctrl.cancelled) break;
+              const payload = _buildMediaPayload(mediaItems[mIdx]);
+              if (payload) {
+                await WhatsAppService.sendMessage(sessionId, targetJid, payload);
+                if (mIdx < mediaItems.length - 1) await _sleep(1500);
+              }
+            }
+          } else {
+            // TEXT ONLY
+            if (hasBodyText) {
+              await WhatsAppService.sendMessage(sessionId, targetJid, {
+                type: 'text',
+                text: message.body_text.trim(),
+              });
+            } else {
+              throw new Error('Message template has no text or media to send');
             }
           }
 
           sent++;
           await BulkLead.updateStatus(lead.id, 'sent');
-          logger.info(`[BulkMessaging] Sent to ${phone} (${lead.contact_name}) | campaign=${campaignId}`);
+          logger.info(`[BulkMessaging] Sent to ${targetJid} (${lead.contact_name}) | campaign=${campaignId}`);
 
         } catch (err) {
           failed++;
-          await BulkLead.updateStatus(lead.id, 'failed', err.message.slice(0, 200));
-          logger.warn(`[BulkMessaging] Failed to send to ${lead.phone_number}:`, { error: err.message });
+          const errMsg = err?.message ? String(err.message).slice(0, 200) : 'Send failed';
+          await BulkLead.updateStatus(lead.id, 'failed', errMsg);
+          logger.warn(`[BulkMessaging] Failed to send to ${lead.phone_number}:`, { error: errMsg });
         }
 
         emitProgress();
 
-        // Respect delay to reduce ban risk
-        if (!ctrl.cancelled) await _sleep(delayMs);
+        // Safe delay between contacts to prevent WhatsApp rate limiting
+        if (!ctrl.cancelled) {
+          await _sleep(delayMs);
+        }
       }
 
       const finalStatus = ctrl.cancelled ? 'cancelled' : 'completed';
@@ -451,6 +512,9 @@ class BulkMessagingServiceClass {
 
     } finally {
       runningCampaigns.delete(campaignId);
+      if (activeCampaignsBySession.get(sessionId) === campaignId) {
+        activeCampaignsBySession.delete(sessionId);
+      }
     }
   }
 }
@@ -550,14 +614,39 @@ function _cleanPhoneNumber(raw) {
   str = str.replace(/\.0+$/, '');
 
   const startsWithPlus = str.startsWith('+');
-  const digits = str.replace(/\D/g, '');
+  let digits = str.replace(/\D/g, '');
 
   if (digits.length < 7) return '';
+
+  // Local Pakistani 11-digit mobile: 03XXXXXXXXX -> 923XXXXXXXXX
+  if (digits.startsWith('03') && digits.length === 11) {
+    return '92' + digits.slice(1);
+  }
 
   if (str.startsWith('00')) {
     return '+' + digits.slice(2);
   }
   return startsWithPlus ? '+' + digits : digits;
+}
+
+function _formatWhatsAppJid(rawPhone, fallbackCountryPrefix = '92') {
+  if (!rawPhone) return null;
+  let str = String(rawPhone).trim();
+  if (str.includes('@')) return str;
+
+  let digits = str.replace(/\D/g, '');
+  if (!digits || digits.length < 7) return null;
+
+  // Local Pakistani 11-digit mobile: 03XXXXXXXXX -> 923XXXXXXXXX
+  if (digits.startsWith('03') && digits.length === 11) {
+    digits = '92' + digits.slice(1);
+  } else if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith('0') && digits.length === 11) {
+    digits = fallbackCountryPrefix + digits.slice(1);
+  }
+
+  return `${digits}@s.whatsapp.net`;
 }
 
 function _cleanContactName(raw, fallbackPhone) {

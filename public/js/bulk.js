@@ -925,10 +925,23 @@ function renderCampaigns(campaigns) {
       <td style="display:flex;gap:4px">
         ${c.status === 'running'
           ? `<button class="btn btn-danger btn-sm" onclick="cancelCampaign('${c.id}')">Cancel</button>`
-          : `<button class="btn btn-danger btn-sm" onclick="deleteCampaign('${c.id}')">Delete</button>`}
+          : `<button class="btn btn-primary btn-sm" onclick="rerunCampaign('${c.messageId || ''}', '${c.listId || ''}', '${esc(c.title || '')}')" title="Re-launch this campaign">Rerun</button>
+             <button class="btn btn-danger btn-sm" onclick="deleteCampaign('${c.id}')">Delete</button>`}
       </td>
     </tr>
   `).join('');
+}
+
+function rerunCampaign(messageId, listId, title) {
+  switchBulkTab('campaigns');
+  const mSel = document.getElementById('campaign-message-select');
+  if (mSel && messageId) mSel.value = messageId;
+  const lSel = document.getElementById('campaign-list-select');
+  if (lSel && listId) lSel.value = listId;
+  const tInput = document.getElementById('campaign-title');
+  if (tInput) tInput.value = title ? (title.includes('Rerun') ? title : `${title} (Rerun)`) : 'Rerun Campaign';
+  showToast('info', 'Campaign selected for rerun! Click "Launch Campaign" to start.');
+  tInput?.focus();
 }
 
 async function refreshBulkDropdowns(messages, lists, preselectedListId = null) {
@@ -1071,7 +1084,11 @@ function retryConnectSession() {
   if (sid) showScanQRModal(sid);
 }
 
+let _isLaunchingCampaign = false;
+
 async function launchCampaign() {
+  if (_isLaunchingCampaign) return;
+
   const sid       = getSessionId();
   const messageId = document.getElementById('campaign-message-select').value;
   const listId    = document.getElementById('campaign-list-select').value;
@@ -1081,6 +1098,9 @@ async function launchCampaign() {
   if (!sid) { showToast('warning', 'Select a session first'); return; }
   if (!messageId) { showToast('warning', 'Select a message template'); return; }
   if (!listId) { showToast('warning', 'Select a lead list'); return; }
+
+  const btn = document.getElementById('btn-launch-campaign');
+  const originalHtml = btn ? btn.innerHTML : 'Launch Campaign';
 
   // Check session connection before attempting to launch
   if (_currentSessionStatus !== 'connected') {
@@ -1093,6 +1113,12 @@ async function launchCampaign() {
         return;
       }
     } catch (_) {}
+  }
+
+  _isLaunchingCampaign = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span style="display:inline-block;animation:spin 1s linear infinite">⏳</span> Starting Campaign...';
   }
 
   try {
@@ -1111,8 +1137,16 @@ async function launchCampaign() {
     if (err.message && (err.message.includes('not connected') || err.message.includes('offline') || err.message.includes('QR'))) {
       showToast('warning', 'Session is offline. Please scan the QR code to connect.');
       showScanQRModal(sid);
+    } else if (err.message && err.message.includes('already running')) {
+      showToast('warning', 'A campaign is already running for this session. Please wait for it to complete or cancel it.');
     } else {
       showToast('error', 'Launch failed: ' + err.message);
+    }
+  } finally {
+    _isLaunchingCampaign = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
     }
   }
 }

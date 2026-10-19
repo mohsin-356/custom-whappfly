@@ -350,6 +350,13 @@ class BulkMessagingControllerClass {
           qr: err.qr,
         });
       }
+      if (err.status === 409 && err.code === 'CAMPAIGN_ALREADY_RUNNING') {
+        return res.status(409).json({
+          success: false,
+          code: 'CAMPAIGN_ALREADY_RUNNING',
+          message: err.message,
+        });
+      }
       next(err);
     }
   }
