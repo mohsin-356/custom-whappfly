@@ -266,7 +266,7 @@ class BulkMessagingServiceClass {
   /**
    * Create and start a bulk campaign.
    * Sends sequentially with a configurable delay to avoid bans.
-   * Checks whether the number is registered on WhatsApp before saving as contact.
+   * Sends directly to any contact number right away (whether saved in WhatsApp or not).
    */
   async startCampaign(sessionId, { messageId, listId, title, delayMs = 1500 }) {
     // Validate ownership
@@ -407,11 +407,22 @@ class BulkMessagingServiceClass {
         }
 
         if (!WhatsAppService.isConnected(sessionId)) {
-          // Session dropped mid-campaign
-          failed++;
-          await BulkLead.updateStatus(lead.id, 'failed', 'Session disconnected');
-          emitProgress();
-          continue;
+          // If session is briefly reconnecting, give it up to 10 seconds to restore connection
+          let reconnected = false;
+          for (let waitStep = 0; waitStep < 10; waitStep++) {
+            await new Promise((r) => setTimeout(r, 1000));
+            if (WhatsAppService.isConnected(sessionId)) {
+              reconnected = true;
+              break;
+            }
+          }
+
+          if (!reconnected) {
+            failed++;
+            await BulkLead.updateStatus(lead.id, 'failed', 'Session disconnected');
+            emitProgress();
+            continue;
+          }
         }
 
         const rawPhone = lead.phone_number;
@@ -428,52 +439,33 @@ class BulkMessagingServiceClass {
           const mediaItems = Array.isArray(message.media) ? message.media : [];
           const hasBodyText = !!(message.body_text && message.body_text.trim());
 
-          if (mediaItems.length === 1) {
-            // SINGLE MEDIA ATTACHMENT:
-            // Send as 1 combined WhatsApp message with body_text as caption
-            // This prevents Signal ratchet desync and eliminates "Waiting for this message"
-            const item = mediaItems[0];
-            const payload = _buildMediaPayload(item);
+          if (!hasBodyText && mediaItems.length === 0) {
+            throw new Error('Message template has no text or media to send');
+          }
+
+          // 1. Send text message separately
+          if (hasBodyText) {
+            await WhatsAppService.sendMessage(sessionId, targetJid, {
+              type: 'text',
+              text: message.body_text.trim(),
+            });
+          }
+
+          // Safe pause between text and media so WhatsApp server acknowledges the Signal ratchet
+          // Especially critical for unsaved contacts to avoid "Waiting for this message"
+          if (hasBodyText && mediaItems.length > 0 && !ctrl.cancelled) {
+            await _sleep(2000);
+          }
+
+          // 2. Send media files separately (keeping each media file's own caption)
+          for (let mIdx = 0; mIdx < mediaItems.length; mIdx++) {
+            if (ctrl.cancelled) break;
+            const payload = _buildMediaPayload(mediaItems[mIdx]);
             if (payload) {
-              if (hasBodyText) {
-                payload.caption = message.body_text.trim();
-              }
               await WhatsAppService.sendMessage(sessionId, targetJid, payload);
-            } else if (hasBodyText) {
-              await WhatsAppService.sendMessage(sessionId, targetJid, {
-                type: 'text',
-                text: message.body_text.trim(),
-              });
-            }
-          } else if (mediaItems.length > 1) {
-            // MULTIPLE MEDIA ATTACHMENTS:
-            // If body text present, send text first
-            if (hasBodyText) {
-              await WhatsAppService.sendMessage(sessionId, targetJid, {
-                type: 'text',
-                text: message.body_text.trim(),
-              });
-              // Safe gap between text and media for Signal ratchet sync
-              await _sleep(2000);
-            }
-            // Send each media item with a 1500ms safe interval
-            for (let mIdx = 0; mIdx < mediaItems.length; mIdx++) {
-              if (ctrl.cancelled) break;
-              const payload = _buildMediaPayload(mediaItems[mIdx]);
-              if (payload) {
-                await WhatsAppService.sendMessage(sessionId, targetJid, payload);
-                if (mIdx < mediaItems.length - 1) await _sleep(1500);
+              if (mIdx < mediaItems.length - 1) {
+                await _sleep(1500);
               }
-            }
-          } else {
-            // TEXT ONLY
-            if (hasBodyText) {
-              await WhatsAppService.sendMessage(sessionId, targetJid, {
-                type: 'text',
-                text: message.body_text.trim(),
-              });
-            } else {
-              throw new Error('Message template has no text or media to send');
             }
           }
 

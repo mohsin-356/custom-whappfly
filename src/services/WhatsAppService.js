@@ -31,31 +31,64 @@ const SESSION_STATUS = {
 class WhatsAppServiceClass extends EventEmitter {
   constructor() {
     super();
-    // sessionId -> { socket, status, qr, info, reconnectAttempts, reconnectTimer, store }
+    // sessionId -> { socket, status, qr, info, reconnectAttempts, loggedOutRetries, reconnectTimer, keepAliveTimer, store }
     this.sessions = new Map();
     this.MAX_RECONNECT_ATTEMPTS = Infinity;
-    this.RECONNECT_BASE_DELAY = 3000;
+    this.RECONNECT_BASE_DELAY = 2000;
     this._startHealthMonitor();
   }
 
+  /**
+   * Proactive Session Guardian:
+   * Runs every 25 seconds to guarantee zero unhandled disconnections.
+   * 1. Detects dropped/stale WebSockets and forces an immediate reconnect.
+   * 2. Revives any disconnected or reconnecting sessions that have stalled.
+   * 3. Scans DB & filesystem for any saved sessions not yet running in memory and restores them.
+   */
   _startHealthMonitor() {
-    // Every 3 minutes: check all sessions that should be connected
-    // If their WebSocket is not OPEN, schedule a reconnect automatically
-    setInterval(() => {
-      for (const [sessionId, s] of this.sessions) {
-        if (s.status !== SESSION_STATUS.CONNECTED) continue;
-        const wsState = s.socket?.ws?.readyState;
-        // WebSocket.OPEN = 1; anything else means the connection is gone
-        if (wsState !== undefined && wsState !== 1) {
-          logger.warn(`[HealthMonitor] Session ${sessionId} WebSocket not OPEN (state=${wsState}) — forcing reconnect`);
-          s.status = SESSION_STATUS.RECONNECTING;
-          getSocketManager().emitToSession(sessionId, 'status', { status: 'reconnecting', sessionId });
-          getSocketManager().streamLog(sessionId, 'warn', 'Health monitor detected dropped connection — reconnecting...');
-          SessionService.updateStatus(sessionId, 'reconnecting').catch(() => {});
-          this._scheduleReconnect(sessionId).catch(() => {});
+    setInterval(async () => {
+      try {
+        // A. Monitor active in-memory sessions
+        for (const [sessionId, s] of this.sessions) {
+          if (s.status === SESSION_STATUS.LOGGED_OUT) continue;
+
+          if (s.status === SESSION_STATUS.CONNECTED) {
+            const wsState = s.socket?.ws?.readyState;
+            // WebSocket.OPEN === 1. Anything else means connection dropped.
+            if (wsState !== 1) {
+              logger.warn(`[Guardian] Session ${sessionId} WebSocket dropped (state=${wsState}) — reconnecting immediately`);
+              s.status = SESSION_STATUS.RECONNECTING;
+              getSocketManager().emitToSession(sessionId, 'status', { status: 'reconnecting', sessionId });
+              getSocketManager().streamLog(sessionId, 'warn', 'Connection drop detected — reconnecting automatically...');
+              await SessionService.updateStatus(sessionId, 'reconnecting').catch(() => {});
+              await this._scheduleReconnect(sessionId, 1000).catch(() => {});
+            }
+          } else if (s.status === SESSION_STATUS.RECONNECTING || s.status === SESSION_STATUS.DISCONNECTED) {
+            // If reconnect timer is missing, trigger reconnect now
+            if (!s.reconnectTimer) {
+              logger.info(`[Guardian] Reviving dormant reconnect for ${sessionId}`);
+              await this._scheduleReconnect(sessionId, 2000).catch(() => {});
+            }
+          }
         }
+
+        // B. Ensure any session with saved credentials on disk or in DB is active
+        const dbSessions = await SessionService.getActiveSessions().catch(() => []);
+        for (const sess of dbSessions) {
+          if (sess.status === 'logged_out') continue;
+          if (!this.sessions.has(sess.sessionId)) {
+            const sessionPath = path.join(config.session.basePath, sess.sessionId);
+            const credsFile = path.join(sessionPath, 'creds.json');
+            if (fs.existsSync(credsFile)) {
+              logger.info(`[Guardian] Auto-restoring session ${sess.sessionId}`);
+              await this.createSession(sess.sessionId, sess.label).catch(() => {});
+            }
+          }
+        }
+      } catch (err) {
+        logger.error('[Guardian] Health check error:', { error: err.message });
       }
-    }, 3 * 60 * 1000);
+    }, 25_000);
   }
 
   // ─────────────────────────────────────────────
@@ -80,7 +113,14 @@ class WhatsAppServiceClass extends EventEmitter {
     const s = this.sessions.get(sessionId);
     if (!s) return { success: false, message: 'Session not found' };
 
-    if (s.reconnectTimer) clearTimeout(s.reconnectTimer);
+    if (s.reconnectTimer) {
+      clearTimeout(s.reconnectTimer);
+      s.reconnectTimer = null;
+    }
+    if (s.keepAliveTimer) {
+      clearInterval(s.keepAliveTimer);
+      s.keepAliveTimer = null;
+    }
 
     try {
       if (s.socket) {
@@ -96,29 +136,22 @@ class WhatsAppServiceClass extends EventEmitter {
     s.status = newStatus;
     await SessionService.updateStatus(sessionId, newStatus);
 
-    if (logout) {
-      await this._cleanupSession(sessionId, true);
-    }
+    // Only delete auth files on deliberate manual logout
+    await this._cleanupSession(sessionId, logout);
 
     getSocketManager().emitToSession(sessionId, 'status', { status: newStatus, sessionId });
     return { success: true, message: logout ? 'Logged out' : 'Disconnected' };
   }
 
   async deleteSession(sessionId) {
+    // Deliberate manual deletion: wipe auth files and database record
     await this._cleanupSession(sessionId, true);
     await SessionService.delete(sessionId);
     return { success: true, message: 'Session deleted' };
   }
 
   async restartSession(sessionId) {
-    const s = this.sessions.get(sessionId);
-    if (s) {
-      if (s.reconnectTimer) clearTimeout(s.reconnectTimer);
-      if (s.socket) {
-        try { s.socket.end(new Error('Restart requested')); } catch (_) {}
-      }
-      this.sessions.delete(sessionId);
-    }
+    await this._cleanupSession(sessionId, false);
     await this._initSession(sessionId);
     return { success: true, message: 'Session restarting' };
   }
@@ -139,7 +172,7 @@ class WhatsAppServiceClass extends EventEmitter {
 
   isConnected(sessionId) {
     const s = this.sessions.get(sessionId);
-    return s?.status === SESSION_STATUS.CONNECTED;
+    return s?.status === SESSION_STATUS.CONNECTED && s?.socket?.ws?.readyState === 1;
   }
 
   getSocket(sessionId) {
@@ -152,7 +185,7 @@ class WhatsAppServiceClass extends EventEmitter {
 
   async sendMessage(sessionId, to, message) {
     const s = this.sessions.get(sessionId);
-    if (!s || s.status !== SESSION_STATUS.CONNECTED) {
+    if (!s || s.status !== SESSION_STATUS.CONNECTED || s.socket?.ws?.readyState !== 1) {
       throw new Error(`Session ${sessionId} is not connected`);
     }
 
@@ -311,18 +344,29 @@ class WhatsAppServiceClass extends EventEmitter {
     s.status = SESSION_STATUS.CONNECTED;
     s.qr = null;
     s.reconnectAttempts = 0;
+    s.loggedOutRetries = 0;
 
     const socket = s.socket;
     const info = {
-      jid: socket.user?.id || null,
-      name: socket.user?.name || null,
-      phone: socket.user?.id?.split(':')[0]?.split('@')[0] || null,
+      jid: socket?.user?.id || null,
+      name: socket?.user?.name || null,
+      phone: socket?.user?.id?.split(':')[0]?.split('@')[0] || null,
     };
     s.info = info;
 
+    // Start proactive keepalive & presence heartbeat (every 40s)
+    if (s.keepAliveTimer) clearInterval(s.keepAliveTimer);
+    s.keepAliveTimer = setInterval(async () => {
+      try {
+        if (s.status === SESSION_STATUS.CONNECTED && s.socket?.ws?.readyState === 1) {
+          await s.socket.sendPresenceUpdate('available').catch(() => {});
+        }
+      } catch (_) {}
+    }, 40_000);
+
     const sm = getSocketManager();
     sm.emitToSession(sessionId, 'status', { status: 'connected', sessionId, info });
-    sm.streamLog(sessionId, 'info', `Connected as ${info.name} (${info.phone})`);
+    sm.streamLog(sessionId, 'info', `Connected as ${info.name || 'User'} (${info.phone})`);
 
     await SessionService.updateStatus(sessionId, 'connected', info);
     logger.info(`Session ${sessionId} CONNECTED as ${info.name} (${info.phone})`);
@@ -350,22 +394,48 @@ class WhatsAppServiceClass extends EventEmitter {
     const statusCode = lastDisconnect?.error?.output?.statusCode;
     const isLoggedOut = statusCode === DisconnectReason.loggedOut;
     const isBadSession = statusCode === DisconnectReason.badSession;
+    const isRestartRequired = statusCode === DisconnectReason.restartRequired;
 
     logger.info(`Session ${sessionId} closed. Code: ${statusCode}, loggedOut: ${isLoggedOut}, badSession: ${isBadSession}`);
 
+    // Clean up socket instance & listeners cleanly
+    if (s.socket) {
+      try {
+        s.socket.ev.removeAllListeners();
+        s.socket.end(undefined);
+      } catch (_) {}
+      s.socket = null;
+    }
+    if (s.keepAliveTimer) {
+      clearInterval(s.keepAliveTimer);
+      s.keepAliveTimer = null;
+    }
+
     if (isLoggedOut) {
-      // ONLY wipe credentials on explicit WhatsApp logout (user removed device from phone)
+      // WhatsApp can return 401 spuriously during server token renewals or network switch.
+      // Attempt up to 2 soft reconnects with existing credentials before declaring logged out.
+      s.loggedOutRetries = (s.loggedOutRetries || 0) + 1;
+      if (s.loggedOutRetries <= 2) {
+        logger.warn(`Session ${sessionId} got 401 (retry ${s.loggedOutRetries}/2) — re-authenticating with saved credentials...`);
+        s.status = SESSION_STATUS.RECONNECTING;
+        await SessionService.updateStatus(sessionId, 'reconnecting');
+        await this._scheduleReconnect(sessionId, 2000);
+        return;
+      }
+
+      // Explicit WhatsApp logout confirmed from user's phone settings
       s.status = SESSION_STATUS.LOGGED_OUT;
       const sm = getSocketManager();
       sm.emitToSession(sessionId, 'status', {
         status: 'logged_out',
         sessionId,
-        message: 'Logged out from WhatsApp — please scan a new QR code',
+        message: 'Logged out from phone settings — please scan a new QR code',
       });
-      sm.streamLog(sessionId, 'warn', 'Session explicitly logged out from WhatsApp.');
+      sm.streamLog(sessionId, 'warn', 'Session unlinked from phone.');
 
       await SessionService.updateStatus(sessionId, 'logged_out');
-      await this._cleanupSession(sessionId, true);
+      // CRITICAL: NEVER automatically delete credentials! Preserve them so user can scan new QR or delete manually
+      await this._cleanupSession(sessionId, false);
 
       await WebhookService.dispatch(sessionId, {
         event: 'session.logged_out',
@@ -373,18 +443,20 @@ class WhatsAppServiceClass extends EventEmitter {
         timestamp: new Date().toISOString(),
       });
     } else {
-      // All other closes (badSession, timeout, network drop, Render restart, etc.)
-      // DO NOT delete auth files — reconnect using existing saved credentials
+      // Reconnect immediately for all other reasons (network drops, server restarts, keepalive timeouts)
+      s.loggedOutRetries = 0;
       s.status = SESSION_STATUS.RECONNECTING;
       const sm = getSocketManager();
       sm.emitToSession(sessionId, 'status', { status: 'reconnecting', sessionId });
       if (isBadSession) {
-        sm.streamLog(sessionId, 'warn', `Bad session signal (${statusCode}) — reconnecting without clearing credentials...`);
+        sm.streamLog(sessionId, 'warn', `Reconnecting with saved credentials (code ${statusCode})...`);
       } else {
-        sm.streamLog(sessionId, 'warn', `Connection closed (code ${statusCode}) — reconnecting...`);
+        sm.streamLog(sessionId, 'warn', `Reconnecting (code ${statusCode})...`);
       }
       await SessionService.updateStatus(sessionId, 'reconnecting');
-      await this._scheduleReconnect(sessionId);
+
+      const delay = isRestartRequired ? 1000 : undefined;
+      await this._scheduleReconnect(sessionId, delay);
     }
   }
 
@@ -394,19 +466,38 @@ class WhatsAppServiceClass extends EventEmitter {
 
   async restoreActiveSessions() {
     try {
-      const sessions = await SessionService.getActiveSessions();
-      logger.info(`Restoring ${sessions.length} session(s)...`);
+      const dbSessions = await SessionService.getActiveSessions().catch(() => []);
+      const dbIds = new Set(dbSessions.map((s) => s.sessionId));
 
-      for (const sess of sessions) {
-        const sessionPath = path.join(config.session.basePath, sess.sessionId);
-        if (fs.existsSync(sessionPath)) {
+      // Scan filesystem for any session directory with creds.json
+      let diskDirs = [];
+      try {
+        if (fs.existsSync(config.session.basePath)) {
+          diskDirs = fs.readdirSync(config.session.basePath);
+        }
+      } catch (_) {}
+
+      const allSessionIds = new Set([...dbIds, ...diskDirs]);
+      logger.info(`Restoring ${allSessionIds.size} session candidate(s)...`);
+
+      for (const sessionId of allSessionIds) {
+        const sessionPath = path.join(config.session.basePath, sessionId);
+        const credsFile = path.join(sessionPath, 'creds.json');
+        const dbSess = dbSessions.find((s) => s.sessionId === sessionId);
+
+        if (fs.existsSync(credsFile)) {
           try {
-            await this.createSession(sess.sessionId, sess.label);
+            logger.info(`Restoring permanent WhatsApp session: ${sessionId}`);
+            await this.createSession(sessionId, dbSess?.label || sessionId);
           } catch (err) {
-            logger.error(`Failed to restore session ${sess.sessionId}:`, { error: err.message });
+            logger.error(`Failed to restore session ${sessionId}:`, { error: err.message });
           }
-        } else {
-          await SessionService.updateStatus(sess.sessionId, 'disconnected');
+        } else if (dbSess && dbSess.status !== 'logged_out') {
+          try {
+            await this.createSession(sessionId, dbSess.label || sessionId);
+          } catch (err) {
+            logger.error(`Failed to init session ${sessionId}:`, { error: err.message });
+          }
         }
       }
     } catch (err) {
@@ -430,14 +521,39 @@ class WhatsAppServiceClass extends EventEmitter {
       fs.mkdirSync(sessionPath, { recursive: true });
     }
 
+    // Clean up any existing socket/timers for this session first to prevent conflicts
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      if (existing.reconnectTimer) {
+        clearTimeout(existing.reconnectTimer);
+        existing.reconnectTimer = null;
+      }
+      if (existing.keepAliveTimer) {
+        clearInterval(existing.keepAliveTimer);
+        existing.keepAliveTimer = null;
+      }
+      if (existing.socket) {
+        try {
+          existing.socket.ev.removeAllListeners();
+          existing.socket.end(undefined);
+        } catch (_) {}
+        existing.socket = null;
+      }
+    }
+
+    const reconnectAttempts = existing?.reconnectAttempts || 0;
+    const loggedOutRetries = existing?.loggedOutRetries || 0;
+
     this.sessions.set(sessionId, {
       socket: null,
       status: SESSION_STATUS.INITIALIZING,
       qr: null,
-      info: null,
-      reconnectAttempts: 0,
+      info: existing?.info || null,
+      reconnectAttempts,
+      loggedOutRetries,
       reconnectTimer: null,
-      store: null,
+      keepAliveTimer: null,
+      store: existing?.store || null,
     });
 
     getSocketManager().emitToSession(sessionId, 'status', {
@@ -446,13 +562,14 @@ class WhatsAppServiceClass extends EventEmitter {
     });
 
     // Dynamic import of Baileys
-    let makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, makeInMemoryStore;
+    let makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, makeInMemoryStore, Browsers;
     try {
       const baileys = require('@whiskeysockets/baileys');
       makeWASocket = baileys.default || baileys.makeWASocket;
       useMultiFileAuthState = baileys.useMultiFileAuthState;
       fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
       makeInMemoryStore = baileys.makeInMemoryStore;
+      Browsers = baileys.Browsers;
     } catch (err) {
       logger.error('Failed to load @whiskeysockets/baileys:', { error: err.message });
       throw new Error('Baileys package not found. Run: npm install');
@@ -470,28 +587,38 @@ class WhatsAppServiceClass extends EventEmitter {
     }
 
     const silentLogger = require('pino')({ level: 'silent' });
+    const store = makeInMemoryStore ? (existing?.store || makeInMemoryStore({ logger: silentLogger })) : null;
 
-    const store = makeInMemoryStore ? makeInMemoryStore({ logger: silentLogger }) : null;
+    // Use standard desktop browser signature to prevent WhatsApp disconnects
+    const browserConfig = Browsers ? Browsers.windows('Desktop') : ['Windows', 'Chrome', '124.0.6367.82'];
 
     const socket = makeWASocket({
       version,
       auth: state,
       printQRInTerminal: false,
       logger: silentLogger,
-      browser: ['WhatsBridge', 'Chrome', '124.0.6367.82'],
+      browser: browserConfig,
       generateHighQualityLinkPreview: false,
       syncFullHistory: false,
-      markOnlineOnConnect: false,
+      markOnlineOnConnect: true,
       connectTimeoutMs: 60_000,
       defaultQueryTimeoutMs: 60_000,
-      keepAliveIntervalMs: 15_000,
+      keepAliveIntervalMs: 25_000,
       emitOwnEvents: false,
       retryRequestDelayMs: 2_000,
+      getMessage: async (key) => {
+        if (store) {
+          const msg = await store.loadMessage(key.remoteJid, key.id);
+          return msg?.message || undefined;
+        }
+        return undefined;
+      },
     });
 
     if (store) store.bind(socket.ev);
 
     const s = this.sessions.get(sessionId);
+    if (!s) return;
     s.socket = socket;
     s.store = store;
     s.status = SESSION_STATUS.CONNECTING;
@@ -505,7 +632,13 @@ class WhatsAppServiceClass extends EventEmitter {
       await connectionHandler.handle(socket, sessionId, update, this);
     });
 
-    socket.ev.on('creds.update', saveCreds);
+    socket.ev.on('creds.update', async () => {
+      try {
+        await saveCreds();
+      } catch (err) {
+        logger.error(`Error saving creds for ${sessionId}:`, { error: err.message });
+      }
+    });
 
     socket.ev.on('messages.upsert', async (data) => {
       await messageHandler.handleUpsert(socket, sessionId, data, store);
@@ -547,29 +680,22 @@ class WhatsAppServiceClass extends EventEmitter {
     socket.ev.on('chats.upsert', () => {});
   }
 
-  async _scheduleReconnect(sessionId) {
+  async _scheduleReconnect(sessionId, forcedDelay) {
     const s = this.sessions.get(sessionId);
     if (!s) return;
 
-    if (s.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
-      logger.error(`Max reconnect attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached for ${sessionId}`);
-      s.status = SESSION_STATUS.DISCONNECTED;
-      getSocketManager().emitToSession(sessionId, 'status', {
-        status: 'disconnected',
-        sessionId,
-        message: 'Max reconnect attempts reached',
-      });
-      await SessionService.updateStatus(sessionId, 'disconnected');
-      return;
+    if (s.reconnectTimer) {
+      clearTimeout(s.reconnectTimer);
+      s.reconnectTimer = null;
     }
 
     s.reconnectAttempts++;
-    await SessionService.incrementReconnects(sessionId);
+    await SessionService.incrementReconnects(sessionId).catch(() => {});
 
-    const delay = Math.min(
-      this.RECONNECT_BASE_DELAY * Math.pow(2, s.reconnectAttempts - 1),
-      300_000
-    );
+    // Fast, resilient reconnect: 2s, 4s, 6s... capped at 10s maximum (NEVER give up)
+    const delay = forcedDelay !== undefined
+      ? forcedDelay
+      : Math.min(this.RECONNECT_BASE_DELAY * Math.min(s.reconnectAttempts, 5), 10_000);
 
     logger.info(
       `Reconnecting session ${sessionId} in ${delay}ms (attempt ${s.reconnectAttempts})`
@@ -577,11 +703,12 @@ class WhatsAppServiceClass extends EventEmitter {
 
     getSocketManager().streamLog(
       sessionId,
-      'warn',
+      'info',
       `Reconnecting in ${(delay / 1000).toFixed(0)}s (attempt ${s.reconnectAttempts})...`
     );
 
     s.reconnectTimer = setTimeout(async () => {
+      s.reconnectTimer = null;
       if (!this.sessions.has(sessionId)) return;
       try {
         await this._initSession(sessionId);
@@ -596,20 +723,32 @@ class WhatsAppServiceClass extends EventEmitter {
   async _cleanupSession(sessionId, deleteAuthFiles = false) {
     const s = this.sessions.get(sessionId);
     if (s) {
-      if (s.reconnectTimer) clearTimeout(s.reconnectTimer);
+      if (s.reconnectTimer) {
+        clearTimeout(s.reconnectTimer);
+        s.reconnectTimer = null;
+      }
+      if (s.keepAliveTimer) {
+        clearInterval(s.keepAliveTimer);
+        s.keepAliveTimer = null;
+      }
       if (s.socket) {
         try {
           s.socket.ev.removeAllListeners();
-          s.socket.end(new Error('Cleanup'));
+          s.socket.end(undefined);
         } catch (_) {}
+        s.socket = null;
       }
     }
 
     if (deleteAuthFiles) {
       const sessionPath = path.join(config.session.basePath, sessionId);
       if (fs.existsSync(sessionPath)) {
-        fs.rmSync(sessionPath, { recursive: true, force: true });
-        logger.info(`Auth files deleted for session ${sessionId}`);
+        try {
+          fs.rmSync(sessionPath, { recursive: true, force: true });
+          logger.info(`Auth files deleted for session ${sessionId}`);
+        } catch (err) {
+          logger.warn(`Could not delete auth files for ${sessionId}: ${err.message}`);
+        }
       }
     }
 
