@@ -31,56 +31,71 @@ const SESSION_STATUS = {
 class WhatsAppServiceClass extends EventEmitter {
   constructor() {
     super();
-    // sessionId -> { socket, status, qr, info, reconnectAttempts, loggedOutRetries, reconnectTimer, keepAliveTimer, store }
+    // sessionId -> { socket, status, qr, info, reconnectAttempts, loggedOutRetries, reconnectTimer, store }
     this.sessions = new Map();
     this.MAX_RECONNECT_ATTEMPTS = Infinity;
-    this.RECONNECT_BASE_DELAY = 2000;
+    this.RECONNECT_BASE_DELAY = 3000;
     this._startHealthMonitor();
   }
 
   /**
-   * Proactive Session Guardian:
-   * Runs every 25 seconds to guarantee zero unhandled disconnections.
-   * 1. Detects dropped/stale WebSockets and forces an immediate reconnect.
-   * 2. Revives any disconnected or reconnecting sessions that have stalled.
-   * 3. Scans DB & filesystem for any saved sessions not yet running in memory and restores them.
+   * Check if a Baileys socket is genuinely open.
+   * Baileys exposes socket.ws as a WebSocketClient class instance.
+   * That class has an `isOpen` getter (returns socket.socket.readyState === OPEN).
+   * socket.ws.readyState is ALWAYS undefined, so we must use socket.ws.isOpen.
+   */
+  _isSocketOpen(socket) {
+    if (!socket) return false;
+    // Preferred: use the WebSocketClient.isOpen getter
+    if (typeof socket.ws?.isOpen === 'boolean') return socket.ws.isOpen;
+    // Fallback: check raw socket readyState directly
+    if (socket.ws?.socket?.readyState === 1) return true;
+    return false;
+  }
+
+  /**
+   * Session Guardian — runs every 2 minutes.
+   * Only triggers reconnect when a session is in RECONNECTING/DISCONNECTED state
+   * with a stalled (missing) timer, or when the actual WebSocket is confirmed dead.
+   * NEVER triggers reconnect for healthy CONNECTED sessions.
    */
   _startHealthMonitor() {
     setInterval(async () => {
       try {
-        // A. Monitor active in-memory sessions
         for (const [sessionId, s] of this.sessions) {
           if (s.status === SESSION_STATUS.LOGGED_OUT) continue;
 
           if (s.status === SESSION_STATUS.CONNECTED) {
-            const wsState = s.socket?.ws?.readyState;
-            // WebSocket.OPEN === 1. Anything else means connection dropped.
-            if (wsState !== 1) {
-              logger.warn(`[Guardian] Session ${sessionId} WebSocket dropped (state=${wsState}) — reconnecting immediately`);
+            // Only reconnect if the WebSocket is genuinely closed/dead
+            if (s.socket && !this._isSocketOpen(s.socket)) {
+              logger.warn(`[Guardian] Session ${sessionId} WebSocket is dead — triggering reconnect`);
               s.status = SESSION_STATUS.RECONNECTING;
               getSocketManager().emitToSession(sessionId, 'status', { status: 'reconnecting', sessionId });
-              getSocketManager().streamLog(sessionId, 'warn', 'Connection drop detected — reconnecting automatically...');
+              getSocketManager().streamLog(sessionId, 'warn', 'Dead connection detected — reconnecting...');
               await SessionService.updateStatus(sessionId, 'reconnecting').catch(() => {});
-              await this._scheduleReconnect(sessionId, 1000).catch(() => {});
+              if (!s.reconnectTimer) {
+                await this._scheduleReconnect(sessionId, 2000).catch(() => {});
+              }
             }
-          } else if (s.status === SESSION_STATUS.RECONNECTING || s.status === SESSION_STATUS.DISCONNECTED) {
-            // If reconnect timer is missing, trigger reconnect now
-            if (!s.reconnectTimer) {
-              logger.info(`[Guardian] Reviving dormant reconnect for ${sessionId}`);
-              await this._scheduleReconnect(sessionId, 2000).catch(() => {});
-            }
+            // If socket is open and status is CONNECTED: do nothing — session is healthy
+          } else if (
+            (s.status === SESSION_STATUS.RECONNECTING || s.status === SESSION_STATUS.DISCONNECTED) &&
+            !s.reconnectTimer
+          ) {
+            // Session is stuck reconnecting with no active timer — revive it
+            logger.info(`[Guardian] Reviving stalled reconnect for ${sessionId}`);
+            await this._scheduleReconnect(sessionId, 3000).catch(() => {});
           }
         }
 
-        // B. Ensure any session with saved credentials on disk or in DB is active
+        // Restore any session in DB with creds on disk that's not tracked in memory at all
         const dbSessions = await SessionService.getActiveSessions().catch(() => []);
         for (const sess of dbSessions) {
           if (sess.status === 'logged_out') continue;
           if (!this.sessions.has(sess.sessionId)) {
-            const sessionPath = path.join(config.session.basePath, sess.sessionId);
-            const credsFile = path.join(sessionPath, 'creds.json');
+            const credsFile = path.join(config.session.basePath, sess.sessionId, 'creds.json');
             if (fs.existsSync(credsFile)) {
-              logger.info(`[Guardian] Auto-restoring session ${sess.sessionId}`);
+              logger.info(`[Guardian] Restoring untracked session ${sess.sessionId}`);
               await this.createSession(sess.sessionId, sess.label).catch(() => {});
             }
           }
@@ -88,7 +103,7 @@ class WhatsAppServiceClass extends EventEmitter {
       } catch (err) {
         logger.error('[Guardian] Health check error:', { error: err.message });
       }
-    }, 25_000);
+    }, 2 * 60 * 1000); // Every 2 minutes — conservative interval to avoid false positives
   }
 
   // ─────────────────────────────────────────────
@@ -116,10 +131,6 @@ class WhatsAppServiceClass extends EventEmitter {
     if (s.reconnectTimer) {
       clearTimeout(s.reconnectTimer);
       s.reconnectTimer = null;
-    }
-    if (s.keepAliveTimer) {
-      clearInterval(s.keepAliveTimer);
-      s.keepAliveTimer = null;
     }
 
     try {
@@ -172,7 +183,9 @@ class WhatsAppServiceClass extends EventEmitter {
 
   isConnected(sessionId) {
     const s = this.sessions.get(sessionId);
-    return s?.status === SESSION_STATUS.CONNECTED && s?.socket?.ws?.readyState === 1;
+    if (!s || s.status !== SESSION_STATUS.CONNECTED) return false;
+    // Use the correct WebSocketClient.isOpen getter — readyState on ws is always undefined
+    return this._isSocketOpen(s.socket);
   }
 
   getSocket(sessionId) {
@@ -185,7 +198,7 @@ class WhatsAppServiceClass extends EventEmitter {
 
   async sendMessage(sessionId, to, message) {
     const s = this.sessions.get(sessionId);
-    if (!s || s.status !== SESSION_STATUS.CONNECTED || s.socket?.ws?.readyState !== 1) {
+    if (!s || s.status !== SESSION_STATUS.CONNECTED || !this._isSocketOpen(s.socket)) {
       throw new Error(`Session ${sessionId} is not connected`);
     }
 
@@ -354,16 +367,6 @@ class WhatsAppServiceClass extends EventEmitter {
     };
     s.info = info;
 
-    // Start proactive keepalive & presence heartbeat (every 40s)
-    if (s.keepAliveTimer) clearInterval(s.keepAliveTimer);
-    s.keepAliveTimer = setInterval(async () => {
-      try {
-        if (s.status === SESSION_STATUS.CONNECTED && s.socket?.ws?.readyState === 1) {
-          await s.socket.sendPresenceUpdate('available').catch(() => {});
-        }
-      } catch (_) {}
-    }, 40_000);
-
     const sm = getSocketManager();
     sm.emitToSession(sessionId, 'status', { status: 'connected', sessionId, info });
     sm.streamLog(sessionId, 'info', `Connected as ${info.name || 'User'} (${info.phone})`);
@@ -405,10 +408,6 @@ class WhatsAppServiceClass extends EventEmitter {
         s.socket.end(undefined);
       } catch (_) {}
       s.socket = null;
-    }
-    if (s.keepAliveTimer) {
-      clearInterval(s.keepAliveTimer);
-      s.keepAliveTimer = null;
     }
 
     if (isLoggedOut) {
@@ -528,10 +527,6 @@ class WhatsAppServiceClass extends EventEmitter {
         clearTimeout(existing.reconnectTimer);
         existing.reconnectTimer = null;
       }
-      if (existing.keepAliveTimer) {
-        clearInterval(existing.keepAliveTimer);
-        existing.keepAliveTimer = null;
-      }
       if (existing.socket) {
         try {
           existing.socket.ev.removeAllListeners();
@@ -552,7 +547,6 @@ class WhatsAppServiceClass extends EventEmitter {
       reconnectAttempts,
       loggedOutRetries,
       reconnectTimer: null,
-      keepAliveTimer: null,
       store: existing?.store || null,
     });
 
@@ -726,10 +720,6 @@ class WhatsAppServiceClass extends EventEmitter {
       if (s.reconnectTimer) {
         clearTimeout(s.reconnectTimer);
         s.reconnectTimer = null;
-      }
-      if (s.keepAliveTimer) {
-        clearInterval(s.keepAliveTimer);
-        s.keepAliveTimer = null;
       }
       if (s.socket) {
         try {
