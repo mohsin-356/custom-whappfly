@@ -600,6 +600,23 @@ class WhatsAppServiceClass extends EventEmitter {
       keepAliveIntervalMs: 25_000,
       emitOwnEvents: false,
       retryRequestDelayMs: 2_000,
+      // patchMessageBeforeSending: fixes "Waiting for this message" for unsaved/new contacts.
+      // WhatsApp Signal Protocol requires deviceListMetadata to be present so the receiver's
+      // device can find the correct pre-key and decrypt the message immediately.
+      patchMessageBeforeSending: (msg) => {
+        const requiresPatch = !!(msg.buttonsMessage || msg.templateMessage || msg.listMessage);
+        if (requiresPatch) {
+          msg = {
+            viewOnceMessage: {
+              message: {
+                messageContextInfo: { deviceListMetadataVersion: 2, deviceListMetadata: {} },
+                ...msg,
+              },
+            },
+          };
+        }
+        return msg;
+      },
       getMessage: async (key) => {
         if (store) {
           const msg = await store.loadMessage(key.remoteJid, key.id);

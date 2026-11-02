@@ -468,6 +468,20 @@ class BulkMessagingServiceClass {
             throw new Error('Message template has no text or media to send');
           }
 
+          // ── Pre-key warm-up ─────────────────────────────────────────────────
+          // "Waiting for this message" / clock icon means the receiver's device
+          // cannot decrypt the message. Root cause: Baileys sends before WhatsApp's
+          // Signal Protocol has fetched the recipient's pre-key bundle.
+          // presenceSubscribe() forces that key exchange FIRST so messages land
+          // with green double-ticks and are immediately readable.
+          try {
+            const socket = WhatsAppService.getSocket(sessionId);
+            if (socket && typeof socket.presenceSubscribe === 'function') {
+              await socket.presenceSubscribe(targetJid);
+              await _sleep(300); // allow key-exchange handshake to complete
+            }
+          } catch (_) { /* non-fatal — still attempt the send */ }
+
           // 1. Send text message separately
           if (hasBodyText) {
             await WhatsAppService.sendMessage(sessionId, targetJid, {
