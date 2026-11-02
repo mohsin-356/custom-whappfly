@@ -305,14 +305,48 @@ class WhatsAppServiceClass extends EventEmitter {
     if (result && result.key && result.message) {
       const msgId = result.key.id;
       const targetJid = result.key.remoteJid || jid;
+      const msgProto = result.message;
+
       if (s.sentMessagesCache) {
-        s.sentMessagesCache.set(msgId, result.message);
-        s.sentMessagesCache.set(`${targetJid}:${msgId}`, result.message);
+        s.sentMessagesCache.set(msgId, msgProto);
+        s.sentMessagesCache.set(`${targetJid}:${msgId}`, msgProto);
+        const cleanPhone = targetJid.split('@')[0];
+        s.sentMessagesCache.set(`${cleanPhone}:${msgId}`, msgProto);
       }
       if (s.store) {
         try {
           s.store.save(result);
         } catch (_) {}
+      }
+
+      // Persist outgoing message in Supabase event_logs so retries can ALWAYS resolve it, even across restarts/redeployments!
+      try {
+        const { getSupabase } = require('../database/connection');
+        const sb = getSupabase();
+        if (sb) {
+          const cleanPhone = targetJid.split('@')[0];
+          await sb.from('event_logs').insert({
+            session_id: sessionId,
+            direction: 'outgoing',
+            event_type: 'message.sent',
+            message_id: msgId,
+            chat_id: targetJid,
+            is_group: targetJid.endsWith('@g.us'),
+            sender_number: s.info?.phone || '',
+            message_type: message.type || 'text',
+            summary: message.text || message.caption || message.type || 'message.sent',
+            payload: {
+              key: result.key,
+              message: msgProto,
+              raw_event: {
+                key: result.key,
+                message: msgProto,
+              },
+            },
+          });
+        }
+      } catch (logErr) {
+        logger.debug(`[WhatsAppService] Failed to persist outgoing event_log: ${logErr.message}`);
       }
     }
 
@@ -648,27 +682,29 @@ class WhatsAppServiceClass extends EventEmitter {
         const remoteJid = key?.remoteJid;
         if (!msgId) return undefined;
 
-        // 1. Sent messages cache (keyed by id or remoteJid:id)
+        // 1. Check in-memory sentMessagesCache (keyed by msgId, remoteJid:id, or cleanPhone:id)
         if (sentMessagesCache) {
-          const cached = sentMessagesCache.get(msgId) || (remoteJid ? sentMessagesCache.get(`${remoteJid}:${msgId}`) : null);
+          const cached = sentMessagesCache.get(msgId) ||
+            (remoteJid ? sentMessagesCache.get(`${remoteJid}:${msgId}`) : null) ||
+            (remoteJid ? sentMessagesCache.get(`${remoteJid.split('@')[0]}:${msgId}`) : null);
           if (cached) {
-            logger.info(`[getMessage] Successfully resolved message from sentMessagesCache for retry: ${msgId}`);
-            return cached;
+            logger.info(`[getMessage] Resolved from sentMessagesCache for retry: id=${msgId}`);
+            return cached.message || cached;
           }
         }
 
-        // 2. In-memory store
-        if (store && remoteJid) {
+        // 2. Check in-memory store
+        if (store) {
           try {
-            const msg = await store.loadMessage(remoteJid, msgId);
-            if (msg?.message) {
-              logger.info(`[getMessage] Successfully resolved message from store for retry: ${msgId}`);
-              return msg.message;
+            const stored = store.load ? store.load(remoteJid, msgId) : null;
+            if (stored) {
+              logger.info(`[getMessage] Resolved from store for retry: id=${msgId}`);
+              return stored.message || stored;
             }
           } catch (_) {}
         }
 
-        // 3. Fallback: check EventLog in DB
+        // 3. Persistent Supabase event_logs lookup (survives restarts/redeployments)
         try {
           const { getSupabase } = require('../database/connection');
           const sb = getSupabase();
@@ -677,17 +713,25 @@ class WhatsAppServiceClass extends EventEmitter {
               .select('payload')
               .eq('message_id', msgId)
               .maybeSingle();
-            if (data?.payload?.message) {
-              return data.payload.message;
+
+            const foundProto = data?.payload?.raw_event?.message ||
+              data?.payload?.message ||
+              data?.payload?.rawMessage;
+            if (foundProto) {
+              logger.info(`[getMessage] Resolved from Supabase event_logs for retry: id=${msgId}`);
+              if (sentMessagesCache) sentMessagesCache.set(msgId, foundProto);
+              return foundProto;
             }
           }
-        } catch (_) {}
+        } catch (dbErr) {
+          logger.warn(`[getMessage] Database lookup error: ${dbErr.message}`);
+        }
 
-        // 4. Critical Signal Ratchet Fallback
-        // Return a minimal conversation object so Baileys does not drop the retry request
-        // and forces WhatsApp to sync the prekey/ratchet session!
-        logger.info(`[getMessage] Using ratchet session recovery fallback for retry: id=${msgId}, jid=${remoteJid}`);
-        return { conversation: '' };
+        logger.warn(`[getMessage] Retry requested but message not available: id=${msgId}, jid=${remoteJid}`);
+        // Return undefined: never return an empty conversation object ({ conversation: '' })
+        // because returning empty message content tricks Baileys into sending blank data that permanently
+        // breaks the recipient client's Signal decryption session!
+        return undefined;
       },
     });
 

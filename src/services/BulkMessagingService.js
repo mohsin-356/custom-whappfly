@@ -462,8 +462,8 @@ class BulkMessagingServiceClass {
 
         // WhatsApp Contact Protocol & User Sync
         // Verifies the recipient is genuinely on WhatsApp and syncs the contact/LID session
+        const socket = WhatsAppService.getSocket(sessionId);
         try {
-          const socket = WhatsAppService.getSocket(sessionId);
           if (socket && typeof socket.onWhatsApp === 'function') {
             const check = await socket.onWhatsApp(targetJid);
             if (Array.isArray(check) && check.length > 0) {
@@ -480,6 +480,27 @@ class BulkMessagingServiceClass {
           }
         } catch (checkErr) {
           logger.warn(`[BulkMessaging] onWhatsApp sync warning for ${targetJid}: ${checkErr.message}`);
+        }
+
+        // WhatsApp Multi-Device Pre-Key & Signal Ratchet Synchronization
+        // 1. Ensure our sender pre-keys are fresh on WhatsApp server
+        if (socket && typeof socket.uploadPreKeysToServerIfRequired === 'function') {
+          try {
+            await socket.uploadPreKeysToServerIfRequired();
+          } catch (_) {}
+        }
+
+        // 2. Force fresh pre-key bundle from WhatsApp server for target recipient!
+        // Passing force=true forces WhatsApp server to deliver a fresh pre-key bundle,
+        // purging any stale or desynced Signal session ratchets from prior failed attempts.
+        // This is what permanently eliminates the "Waiting for this message. This may take a while" error!
+        if (socket && typeof socket.assertSessions === 'function') {
+          try {
+            await socket.assertSessions([targetJid], true);
+            logger.debug(`[BulkMessaging] Fresh Signal pre-key session asserted for ${targetJid}`);
+          } catch (sessionErr) {
+            logger.warn(`[BulkMessaging] assertSessions warning for ${targetJid}: ${sessionErr.message}`);
+          }
         }
 
         try {
@@ -720,12 +741,23 @@ function _buildMediaPayload(item) {
     }
   }
 
+  const defaultMime = item.type === 'video' ? 'video/mp4'
+    : item.type === 'image' ? 'image/jpeg'
+    : item.type === 'audio' ? 'audio/mpeg'
+    : item.type === 'document' ? 'application/octet-stream'
+    : undefined;
+
+  const defaultFileName = item.type === 'video' ? 'video.mp4'
+    : item.type === 'image' ? 'image.jpg'
+    : item.type === 'audio' ? 'audio.mp3'
+    : 'document';
+
   const base = {
     url:      item.url    || undefined,
     base64:   cleanBase64,
-    mimetype: item.mimetype || undefined,
+    mimetype: item.mimetype || defaultMime,
     caption:  item.caption  || '',
-    fileName: item.fileName || undefined,
+    fileName: item.fileName || defaultFileName,
   };
   switch (item.type) {
     case 'image':    return { type: 'image',    ...base };
