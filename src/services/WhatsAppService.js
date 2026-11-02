@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { EventEmitter } = require('events');
 const QRCode = require('qrcode');
+const NodeCache = require('node-cache');
 
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -299,6 +300,24 @@ class WhatsAppServiceClass extends EventEmitter {
         throw new Error(`Unsupported message type: ${message.type}`);
     }
 
+    // Cache sent message in sentMessagesCache & store so WhatsApp decryption retry requests can resolve it
+    if (result && result.key && result.message) {
+      const msgId = result.key.id;
+      const targetJid = result.key.remoteJid || jid;
+      if (s.sentMessagesCache) {
+        s.sentMessagesCache.set(msgId, result.message);
+        s.sentMessagesCache.set(`${targetJid}:${msgId}`, result.message);
+      }
+      if (s.store?.messages) {
+        try {
+          if (!s.store.messages[targetJid]) {
+            s.store.messages[targetJid] = { array: [] };
+          }
+          s.store.messages[targetJid].array.push(result);
+        } catch (_) {}
+      }
+    }
+
     getSocketManager().incrementOutgoing(sessionId);
     return result;
   }
@@ -539,6 +558,10 @@ class WhatsAppServiceClass extends EventEmitter {
     const reconnectAttempts = existing?.reconnectAttempts || 0;
     const loggedOutRetries = existing?.loggedOutRetries || 0;
 
+    // Persist or initialize caches across reconnects
+    const msgRetryCounterCache = existing?.msgRetryCounterCache || new NodeCache({ stdTTL: 3600, checkperiod: 120 });
+    const sentMessagesCache = existing?.sentMessagesCache || new NodeCache({ stdTTL: 86400, maxKeys: 10000 });
+
     this.sessions.set(sessionId, {
       socket: null,
       status: SESSION_STATUS.INITIALIZING,
@@ -548,6 +571,8 @@ class WhatsAppServiceClass extends EventEmitter {
       loggedOutRetries,
       reconnectTimer: null,
       store: existing?.store || null,
+      msgRetryCounterCache,
+      sentMessagesCache,
     });
 
     getSocketManager().emitToSession(sessionId, 'status', {
@@ -600,9 +625,7 @@ class WhatsAppServiceClass extends EventEmitter {
       keepAliveIntervalMs: 25_000,
       emitOwnEvents: false,
       retryRequestDelayMs: 2_000,
-      // patchMessageBeforeSending: fixes "Waiting for this message" for unsaved/new contacts.
-      // WhatsApp Signal Protocol requires deviceListMetadata to be present so the receiver's
-      // device can find the correct pre-key and decrypt the message immediately.
+      msgRetryCounterCache,
       patchMessageBeforeSending: (msg) => {
         const requiresPatch = !!(msg.buttonsMessage || msg.templateMessage || msg.listMessage);
         if (requiresPatch) {
@@ -618,10 +641,46 @@ class WhatsAppServiceClass extends EventEmitter {
         return msg;
       },
       getMessage: async (key) => {
-        if (store) {
-          const msg = await store.loadMessage(key.remoteJid, key.id);
-          return msg?.message || undefined;
+        const msgId = key?.id;
+        const remoteJid = key?.remoteJid;
+        if (!msgId) return undefined;
+
+        // 1. Sent messages cache (keyed by id or remoteJid:id)
+        if (sentMessagesCache) {
+          const cached = sentMessagesCache.get(msgId) || (remoteJid ? sentMessagesCache.get(`${remoteJid}:${msgId}`) : null);
+          if (cached) {
+            logger.info(`[getMessage] Successfully resolved message from sentMessagesCache for retry: ${msgId}`);
+            return cached;
+          }
         }
+
+        // 2. In-memory store
+        if (store && remoteJid) {
+          try {
+            const msg = await store.loadMessage(remoteJid, msgId);
+            if (msg?.message) {
+              logger.info(`[getMessage] Successfully resolved message from store for retry: ${msgId}`);
+              return msg.message;
+            }
+          } catch (_) {}
+        }
+
+        // 3. Fallback: check EventLog in DB
+        try {
+          const { getSupabase } = require('../database/connection');
+          const sb = getSupabase();
+          if (sb) {
+            const { data } = await sb.from('event_logs')
+              .select('payload')
+              .eq('message_id', msgId)
+              .maybeSingle();
+            if (data?.payload?.message) {
+              return data.payload.message;
+            }
+          }
+        } catch (_) {}
+
+        logger.warn(`[getMessage] Retry requested but message not found: id=${msgId}, jid=${remoteJid}`);
         return undefined;
       },
     });

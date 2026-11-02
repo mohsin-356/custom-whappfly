@@ -451,13 +451,35 @@ class BulkMessagingServiceClass {
         }
 
         const rawPhone = lead.phone_number;
-        const targetJid = _formatWhatsAppJid(rawPhone, fallbackPrefix);
+        let targetJid = _formatWhatsAppJid(rawPhone, fallbackPrefix);
 
         if (!targetJid) {
           skipped++;
           await BulkLead.updateStatus(lead.id, 'skipped', 'Invalid phone number format');
           emitProgress();
           continue;
+        }
+
+        // WhatsApp Contact Protocol & User Sync
+        // Verifies the recipient is genuinely on WhatsApp and syncs the contact/LID session
+        try {
+          const socket = WhatsAppService.getSocket(sessionId);
+          if (socket && typeof socket.onWhatsApp === 'function') {
+            const check = await socket.onWhatsApp(targetJid);
+            if (Array.isArray(check) && check.length > 0) {
+              if (!check[0].exists) {
+                skipped++;
+                await BulkLead.updateStatus(lead.id, 'skipped', 'Not registered on WhatsApp');
+                emitProgress();
+                continue;
+              }
+              if (check[0].jid) {
+                targetJid = check[0].jid;
+              }
+            }
+          }
+        } catch (checkErr) {
+          logger.warn(`[BulkMessaging] onWhatsApp sync warning for ${targetJid}: ${checkErr.message}`);
         }
 
         try {
@@ -467,20 +489,6 @@ class BulkMessagingServiceClass {
           if (!hasBodyText && mediaItems.length === 0) {
             throw new Error('Message template has no text or media to send');
           }
-
-          // ── Pre-key warm-up ─────────────────────────────────────────────────
-          // "Waiting for this message" / clock icon means the receiver's device
-          // cannot decrypt the message. Root cause: Baileys sends before WhatsApp's
-          // Signal Protocol has fetched the recipient's pre-key bundle.
-          // presenceSubscribe() forces that key exchange FIRST so messages land
-          // with green double-ticks and are immediately readable.
-          try {
-            const socket = WhatsAppService.getSocket(sessionId);
-            if (socket && typeof socket.presenceSubscribe === 'function') {
-              await socket.presenceSubscribe(targetJid);
-              await _sleep(300); // allow key-exchange handshake to complete
-            }
-          } catch (_) { /* non-fatal — still attempt the send */ }
 
           // 1. Send text message separately
           if (hasBodyText) {
@@ -649,9 +657,18 @@ function _cleanPhoneNumber(raw) {
 
   if (digits.length < 7) return '';
 
-  // Local Pakistani 11-digit mobile: 03XXXXXXXXX -> 923XXXXXXXXX
-  if (digits.startsWith('03') && digits.length === 11) {
-    return '92' + digits.slice(1);
+  // Pakistani formats:
+  // 9203XXXXXXXXX (13 digits) -> 923XXXXXXXXX
+  if (digits.startsWith('9203') && digits.length === 13) {
+    digits = '92' + digits.slice(3);
+  }
+  // 00923XXXXXXXXX (13-14 digits) -> 923XXXXXXXXX
+  else if (digits.startsWith('00923') && digits.length === 14) {
+    digits = digits.slice(2);
+  }
+  // 03XXXXXXXXX (11 digits) -> 923XXXXXXXXX
+  else if (digits.startsWith('03') && digits.length === 11) {
+    digits = '92' + digits.slice(1);
   }
 
   if (str.startsWith('00')) {
