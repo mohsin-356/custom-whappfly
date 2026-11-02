@@ -90,7 +90,9 @@ const BulkLeadList = {
     const sb = getSupabase();
     const { count, error } = await sb.from('bulk_leads').select('*', { count: 'exact', head: true }).eq('list_id', id);
     if (error) throw error;
-    await sb.from(TABLE).update({ total_contacts: count || 0 }).eq('id', id);
+    const { data, error: updateErr } = await sb.from(TABLE).update({ total_contacts: count || 0 }).eq('id', id).select('*').maybeSingle();
+    if (updateErr) throw updateErr;
+    return attachMethods(data);
   },
 
   async deleteOne(id, sessionId) {

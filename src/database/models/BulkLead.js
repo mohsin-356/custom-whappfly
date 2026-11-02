@@ -78,8 +78,11 @@ const BulkLead = {
 
   async updateStatus(id, status, errorMsg = null) {
     const sb = getSupabase();
-    const setValues = { status, sent_at: status === 'sent' ? new Date().toISOString() : null };
-    if (errorMsg) setValues.error = errorMsg;
+    const setValues = {
+      status,
+      sent_at: status === 'sent' ? new Date().toISOString() : null,
+      error:   errorMsg || null,   // always clear error on success, set on failure
+    };
     const { error } = await sb.from(TABLE).update(setValues).eq('id', id);
     if (error) throw error;
   },

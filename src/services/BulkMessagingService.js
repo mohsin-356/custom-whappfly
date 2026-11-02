@@ -276,12 +276,32 @@ class BulkMessagingServiceClass {
     ]);
 
     // Prevent duplicate concurrent campaigns running for the same session
+    // Check both in-memory map AND database (handles server-restart edge case where
+    // map was cleared but DB still shows a campaign as 'running')
     const activeCampaignId = activeCampaignsBySession.get(sessionId);
     if (activeCampaignId && runningCampaigns.has(activeCampaignId)) {
       const err = new Error('A campaign is already running for this session. Please wait for it to complete or cancel it before starting another.');
       err.status = 409;
       err.code = 'CAMPAIGN_ALREADY_RUNNING';
       throw err;
+    }
+
+    // Check DB for any stale 'running' campaigns (e.g. after server crash/restart)
+    const { getSupabase } = require('../database/connection');
+    const { data: staleRunning } = await getSupabase()
+      .from('bulk_campaigns')
+      .select('id')
+      .eq('session_id', sessionId)
+      .eq('status', 'running')
+      .limit(1)
+      .maybeSingle();
+    if (staleRunning) {
+      // Auto-fix: mark stale running campaign as failed so new one can start
+      await getSupabase()
+        .from('bulk_campaigns')
+        .update({ status: 'failed', completed_at: new Date().toISOString() })
+        .eq('id', staleRunning.id);
+      logger.warn(`[BulkMessaging] Auto-fixed stale running campaign ${staleRunning.id} for session ${sessionId}`);
     }
 
     // Get the WhatsApp socket — session must be connected
@@ -324,7 +344,6 @@ class BulkMessagingServiceClass {
 
     // Reset lead statuses for a fresh rerun
     await BulkLead.resetListStatuses(listId);
-
     const safeDelay = Math.max(1200, delayMs || 1500);
 
     const campaign = await BulkCampaign.create({
@@ -400,9 +419,15 @@ class BulkMessagingServiceClass {
     const fallbackPrefix = sessionPhone ? sessionPhone.slice(0, 2) : '92';
 
     try {
-      for (const lead of leads) {
+      for (let leadIdx = 0; leadIdx < leads.length; leadIdx++) {
+        const lead = leads[leadIdx];
         if (ctrl.cancelled) {
-          skipped += leads.length - sent - failed - skipped;
+          // Mark all remaining pending leads as skipped in the DB
+          const remainingLeads = leads.slice(leadIdx);
+          skipped += remainingLeads.length;
+          await Promise.all(
+            remainingLeads.map((l) => BulkLead.updateStatus(l.id, 'skipped', 'Campaign cancelled').catch(() => {}))
+          );
           break;
         }
 
@@ -650,9 +675,20 @@ function _cleanContactName(raw, fallbackPhone) {
 
 function _buildMediaPayload(item) {
   if (!item || !item.type) return null;
+
+  // Strip data URI prefix from base64 strings (e.g. "data:image/jpeg;base64,/9j/...")
+  // WhatsAppService.sendMessage expects pure base64, not a data URI
+  let cleanBase64 = item.base64 || undefined;
+  if (cleanBase64 && cleanBase64.startsWith('data:')) {
+    const commaIdx = cleanBase64.indexOf(',');
+    if (commaIdx !== -1) {
+      cleanBase64 = cleanBase64.slice(commaIdx + 1);
+    }
+  }
+
   const base = {
     url:      item.url    || undefined,
-    base64:   item.base64 || undefined,
+    base64:   cleanBase64,
     mimetype: item.mimetype || undefined,
     caption:  item.caption  || '',
     fileName: item.fileName || undefined,
