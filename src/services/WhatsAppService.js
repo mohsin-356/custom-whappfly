@@ -9,6 +9,7 @@ const NodeCache = require('node-cache');
 const config = require('../config');
 const logger = require('../utils/logger');
 const { getSocketManager } = require('../socket/SocketManager');
+const { InMemoryMessageStore } = require('../utils/messageStore');
 const { SessionService } = require('./SessionService');
 const { WebhookService } = require('./WebhookService');
 const connectionHandler = require('../events/connectionHandler');
@@ -308,12 +309,9 @@ class WhatsAppServiceClass extends EventEmitter {
         s.sentMessagesCache.set(msgId, result.message);
         s.sentMessagesCache.set(`${targetJid}:${msgId}`, result.message);
       }
-      if (s.store?.messages) {
+      if (s.store) {
         try {
-          if (!s.store.messages[targetJid]) {
-            s.store.messages[targetJid] = { array: [] };
-          }
-          s.store.messages[targetJid].array.push(result);
+          s.store.save(result);
         } catch (_) {}
       }
     }
@@ -561,6 +559,7 @@ class WhatsAppServiceClass extends EventEmitter {
     // Persist or initialize caches across reconnects
     const msgRetryCounterCache = existing?.msgRetryCounterCache || new NodeCache({ stdTTL: 3600, checkperiod: 120 });
     const sentMessagesCache = existing?.sentMessagesCache || new NodeCache({ stdTTL: 86400, maxKeys: 10000 });
+    const store = existing?.store || new InMemoryMessageStore();
 
     this.sessions.set(sessionId, {
       socket: null,
@@ -570,7 +569,7 @@ class WhatsAppServiceClass extends EventEmitter {
       reconnectAttempts,
       loggedOutRetries,
       reconnectTimer: null,
-      store: existing?.store || null,
+      store,
       msgRetryCounterCache,
       sentMessagesCache,
     });
@@ -606,14 +605,17 @@ class WhatsAppServiceClass extends EventEmitter {
     }
 
     const silentLogger = require('pino')({ level: 'silent' });
-    const store = makeInMemoryStore ? (existing?.store || makeInMemoryStore({ logger: silentLogger })) : null;
+    const { makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
 
-    // Use standard desktop browser signature to prevent WhatsApp disconnects
+    // Use standard desktop browser signature
     const browserConfig = Browsers ? Browsers.windows('Desktop') : ['Windows', 'Chrome', '124.0.6367.82'];
 
     const socket = makeWASocket({
       version,
-      auth: state,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, silentLogger),
+      },
       printQRInTerminal: false,
       logger: silentLogger,
       browser: browserConfig,
@@ -623,8 +625,9 @@ class WhatsAppServiceClass extends EventEmitter {
       connectTimeoutMs: 60_000,
       defaultQueryTimeoutMs: 60_000,
       keepAliveIntervalMs: 25_000,
-      emitOwnEvents: false,
-      retryRequestDelayMs: 2_000,
+      emitOwnEvents: true,
+      retryRequestDelayMs: 250,
+      maxMsgRetryCount: 5,
       msgRetryCounterCache,
       patchMessageBeforeSending: (msg) => {
         const requiresPatch = !!(msg.buttonsMessage || msg.templateMessage || msg.listMessage);
@@ -680,8 +683,11 @@ class WhatsAppServiceClass extends EventEmitter {
           }
         } catch (_) {}
 
-        logger.warn(`[getMessage] Retry requested but message not found: id=${msgId}, jid=${remoteJid}`);
-        return undefined;
+        // 4. Critical Signal Ratchet Fallback
+        // Return a minimal conversation object so Baileys does not drop the retry request
+        // and forces WhatsApp to sync the prekey/ratchet session!
+        logger.info(`[getMessage] Using ratchet session recovery fallback for retry: id=${msgId}, jid=${remoteJid}`);
+        return { conversation: '' };
       },
     });
 
