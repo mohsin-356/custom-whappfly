@@ -10,7 +10,6 @@ const messageRoutes = require('./messageRoutes');
 const groupRoutes = require('./groupRoutes');
 const metricsRoutes = require('./metricsRoutes');
 const mediaRoutes = require('./mediaRoutes');
-const bulkRoutes  = require('./bulkRoutes');
 const SessionController = require('../controllers/SessionController');
 const { apiLimiter, authLimiter } = require('../middlewares/rateLimiter');
 const { validateBody, schemas } = require('../middlewares/validator');
@@ -32,8 +31,6 @@ router.use('/', messageRoutes);
 router.use('/sessions/:sessionId', groupRoutes);
 router.use('/', metricsRoutes);
 router.use('/media', mediaRoutes);
-router.use('/bulk',  bulkRoutes);
-
 // Swagger documentation
 const swaggerOptions = {
   definition: {

@@ -105,7 +105,7 @@ class WhatsAppServiceClass extends EventEmitter {
       } catch (err) {
         logger.error('[Guardian] Health check error:', { error: err.message });
       }
-    }, 2 * 60 * 1000); // Every 2 minutes — conservative interval to avoid false positives
+    }, 60 * 1000); // Every 1 minute — check and recover dead sessions quickly
   }
 
   // ─────────────────────────────────────────────
@@ -465,8 +465,8 @@ class WhatsAppServiceClass extends EventEmitter {
       // WhatsApp can return 401 spuriously during server token renewals or network switch.
       // Attempt up to 2 soft reconnects with existing credentials before declaring logged out.
       s.loggedOutRetries = (s.loggedOutRetries || 0) + 1;
-      if (s.loggedOutRetries <= 2) {
-        logger.warn(`Session ${sessionId} got 401 (retry ${s.loggedOutRetries}/2) — re-authenticating with saved credentials...`);
+      if (s.loggedOutRetries <= 5) {
+        logger.warn(`Session ${sessionId} got 401 (retry ${s.loggedOutRetries}/5) — re-authenticating with saved credentials...`);
         s.status = SESSION_STATUS.RECONNECTING;
         await SessionService.updateStatus(sessionId, 'reconnecting');
         await this._scheduleReconnect(sessionId, 2000);
@@ -656,12 +656,12 @@ class WhatsAppServiceClass extends EventEmitter {
       generateHighQualityLinkPreview: false,
       syncFullHistory: false,
       markOnlineOnConnect: true,
-      connectTimeoutMs: 60_000,
-      defaultQueryTimeoutMs: 60_000,
-      keepAliveIntervalMs: 25_000,
+      connectTimeoutMs: 90_000,
+      defaultQueryTimeoutMs: 90_000,
+      keepAliveIntervalMs: 10_000,
       emitOwnEvents: true,
-      retryRequestDelayMs: 250,
-      maxMsgRetryCount: 5,
+      retryRequestDelayMs: 200,
+      maxMsgRetryCount: 8,
       msgRetryCounterCache,
       patchMessageBeforeSending: (msg) => {
         const requiresPatch = !!(msg.buttonsMessage || msg.templateMessage || msg.listMessage);
@@ -815,7 +815,7 @@ class WhatsAppServiceClass extends EventEmitter {
     // Fast, resilient reconnect: 2s, 4s, 6s... capped at 10s maximum (NEVER give up)
     const delay = forcedDelay !== undefined
       ? forcedDelay
-      : Math.min(this.RECONNECT_BASE_DELAY * Math.min(s.reconnectAttempts, 5), 10_000);
+      : Math.min(this.RECONNECT_BASE_DELAY * Math.min(s.reconnectAttempts, 3), 8_000);
 
     logger.info(
       `Reconnecting session ${sessionId} in ${delay}ms (attempt ${s.reconnectAttempts})`
