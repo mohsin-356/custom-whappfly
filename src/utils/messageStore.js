@@ -74,6 +74,11 @@ class InMemoryMessageStore {
         this.save(m);
       }
     });
+    ev.on('messaging-history.set', ({ messages }) => {
+      for (const m of messages || []) {
+        this.save(m);
+      }
+    });
   }
 }
 

@@ -12,10 +12,17 @@ function normalizeMessage(rawMessage, sessionId, store) {
 
   if (!key || !message) return null;
 
-  const contentType = getContentType(message);
+  // Unwrap Baileys message wrappers (ephemeralMessage, viewOnceMessage, viewOnceMessageV2, documentWithCaptionMessage, etc.)
+  let cleanMsg = message;
+  try {
+    const { normalizeMessageContent } = require('@whiskeysockets/baileys');
+    cleanMsg = normalizeMessageContent(message) || message;
+  } catch (_) {}
+
+  const contentType = getContentType(cleanMsg);
   if (!contentType) return null;
 
-  const content = message[contentType] || {};
+  const content = cleanMsg[contentType] || {};
 
   // JID resolution
   const remoteJid = key.remoteJid;
@@ -47,7 +54,7 @@ function normalizeMessage(rawMessage, sessionId, store) {
   const timestamp = Math.floor(ts);
 
   // Context / Quoted message
-  const contextInfo = content.contextInfo || message.extendedTextMessage?.contextInfo || null;
+  const contextInfo = content.contextInfo || cleanMsg.extendedTextMessage?.contextInfo || null;
   const quotedMessage = contextInfo?.quotedMessage
     ? normalizeQuotedMessage(contextInfo)
     : null;
@@ -73,6 +80,7 @@ function normalizeMessage(rawMessage, sessionId, store) {
     is_status: isStatus,
     is_from_me: key.fromMe || false,
     message_type: simplifyType(contentType),
+    content_type: contentType,
     message_body: null,
     quoted_message: quotedMessage,
     mentions,
@@ -101,7 +109,7 @@ function normalizeMessage(rawMessage, sessionId, store) {
   };
 
   // Populate type-specific fields
-  populateTypeFields(payload, contentType, content, message);
+  populateTypeFields(payload, contentType, content, cleanMsg);
 
   return payload;
 }

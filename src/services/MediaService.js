@@ -37,15 +37,22 @@ class MediaServiceClass {
       // Lazy-require Baileys to prevent startup issues
       const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
-      const buffer = await downloadMediaMessage(
+      const downloadPromise = downloadMediaMessage(
         rawMessage,
         'buffer',
         {},
         {
           logger: baileysLogger,
-          reuploadRequest: socket.updateMediaMessage,
+          reuploadRequest: socket?.updateMediaMessage,
         }
       );
+
+      // Safe 15-second timeout so a stalled WhatsApp CDN never blocks message processing
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Media download timeout (15s)')), 15000)
+      );
+
+      const buffer = await Promise.race([downloadPromise, timeoutPromise]);
 
       if (!buffer || buffer.length === 0) {
         logger.warn({ messageId, sessionId }, 'Media download returned empty buffer');
@@ -124,11 +131,11 @@ class MediaServiceClass {
       );
       return payload;
     } catch (err) {
-      logger.error({ err, messageId, sessionId }, 'Media decrypt failed');
+      logger.warn({ error: err.message, messageId, sessionId }, 'Media decrypt/download failed or timed out');
       if (payload.media) {
         payload.media.base64 = null;
         payload.media.url = null;
-        payload.media.error = 'decrypt_failed';
+        payload.media.error = err.message?.includes('timeout') ? 'timeout' : 'decrypt_failed';
       }
       // Still return the payload so the webhook is dispatched (fail safe).
       return payload;

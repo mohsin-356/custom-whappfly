@@ -45,9 +45,20 @@ class WebhookServiceClass {
         delete cleanPayload.media.buffer;
       }
 
-      await this.send(sessionId, url, cleanPayload, {
-        webhookDoc: webhook,
-      });
+      // Asynchronous non-blocking delivery via QueueService
+      const { QueueService } = require('./QueueService');
+      if (QueueService.initialized) {
+        await QueueService.enqueueWebhook(sessionId, url, cleanPayload, {
+          retries: webhook.maxRetries || config.webhook.maxRetries,
+        });
+      } else {
+        // Fallback: asynchronous background delivery without blocking the socket
+        setImmediate(() => {
+          this.send(sessionId, url, cleanPayload, { webhookDoc: webhook }).catch((err) => {
+            logger.error(`[WebhookService] Background send error: ${err.message}`);
+          });
+        });
+      }
     } catch (err) {
       logger.error(`[WebhookService] dispatch error for session ${sessionId}:`, {
         error: err.message,

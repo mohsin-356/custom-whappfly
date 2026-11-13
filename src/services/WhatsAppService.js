@@ -35,6 +35,7 @@ class WhatsAppServiceClass extends EventEmitter {
     super();
     // sessionId -> { socket, status, qr, info, reconnectAttempts, loggedOutRetries, reconnectTimer, store }
     this.sessions = new Map();
+    this.initializingSessions = new Set();
     this.MAX_RECONNECT_ATTEMPTS = Infinity;
     this.RECONNECT_BASE_DELAY = 3000;
     this._startHealthMonitor();
@@ -70,19 +71,33 @@ class WhatsAppServiceClass extends EventEmitter {
           if (s.status === SESSION_STATUS.CONNECTED) {
             // Only reconnect if the WebSocket is genuinely closed/dead
             if (s.socket && !this._isSocketOpen(s.socket)) {
-              logger.warn(`[Guardian] Session ${sessionId} WebSocket is dead — triggering reconnect`);
+              logger.warn(`[Guardian] Session ${sessionId} WebSocket confirmed dead — triggering reconnect`);
               s.status = SESSION_STATUS.RECONNECTING;
               getSocketManager().emitToSession(sessionId, 'status', { status: 'reconnecting', sessionId });
               getSocketManager().streamLog(sessionId, 'warn', 'Dead connection detected — reconnecting...');
               await SessionService.updateStatus(sessionId, 'reconnecting').catch(() => {});
-              if (!s.reconnectTimer) {
+              
+              if (s.socket) {
+                try {
+                  s.socket.ev.removeAllListeners();
+                  if (s.socket.ws) {
+                    s.socket.ws.removeAllListeners();
+                    s.socket.ws.close();
+                  }
+                  s.socket.end(undefined);
+                } catch (_) {}
+                s.socket = null;
+              }
+              
+              if (!s.reconnectTimer && !this.initializingSessions.has(sessionId)) {
                 await this._scheduleReconnect(sessionId, 2000).catch(() => {});
               }
             }
             // If socket is open and status is CONNECTED: do nothing — session is healthy
           } else if (
             (s.status === SESSION_STATUS.RECONNECTING || s.status === SESSION_STATUS.DISCONNECTED) &&
-            !s.reconnectTimer
+            !s.reconnectTimer &&
+            !this.initializingSessions.has(sessionId)
           ) {
             // Session is stuck reconnecting with no active timer — revive it
             logger.info(`[Guardian] Reviving stalled reconnect for ${sessionId}`);
@@ -94,7 +109,7 @@ class WhatsAppServiceClass extends EventEmitter {
         const dbSessions = await SessionService.getActiveSessions().catch(() => []);
         for (const sess of dbSessions) {
           if (sess.status === 'logged_out') continue;
-          if (!this.sessions.has(sess.sessionId)) {
+          if (!this.sessions.has(sess.sessionId) && !this.initializingSessions.has(sess.sessionId)) {
             const credsFile = path.join(config.session.basePath, sess.sessionId, 'creds.json');
             if (fs.existsSync(credsFile)) {
               logger.info(`[Guardian] Restoring untracked session ${sess.sessionId}`);
@@ -105,7 +120,7 @@ class WhatsAppServiceClass extends EventEmitter {
       } catch (err) {
         logger.error('[Guardian] Health check error:', { error: err.message });
       }
-    }, 60 * 1000); // Every 1 minute — check and recover dead sessions quickly
+    }, 2 * 60 * 1000); // Conservative 2-minute interval to prevent false-alarm flapping
   }
 
   // ─────────────────────────────────────────────
@@ -449,13 +464,18 @@ class WhatsAppServiceClass extends EventEmitter {
     const isLoggedOut = statusCode === DisconnectReason.loggedOut;
     const isBadSession = statusCode === DisconnectReason.badSession;
     const isRestartRequired = statusCode === DisconnectReason.restartRequired;
+    const isConnectionReplaced = statusCode === DisconnectReason.connectionReplaced;
 
-    logger.info(`Session ${sessionId} closed. Code: ${statusCode}, loggedOut: ${isLoggedOut}, badSession: ${isBadSession}`);
+    logger.info(`Session ${sessionId} closed. Code: ${statusCode}, loggedOut: ${isLoggedOut}, badSession: ${isBadSession}, replaced: ${isConnectionReplaced}`);
 
     // Clean up socket instance & listeners cleanly
     if (s.socket) {
       try {
         s.socket.ev.removeAllListeners();
+        if (s.socket.ws) {
+          s.socket.ws.removeAllListeners();
+          s.socket.ws.close();
+        }
         s.socket.end(undefined);
       } catch (_) {}
       s.socket = null;
@@ -463,7 +483,7 @@ class WhatsAppServiceClass extends EventEmitter {
 
     if (isLoggedOut) {
       // WhatsApp can return 401 spuriously during server token renewals or network switch.
-      // Attempt up to 2 soft reconnects with existing credentials before declaring logged out.
+      // Attempt up to 5 soft reconnects with existing credentials before declaring logged out.
       s.loggedOutRetries = (s.loggedOutRetries || 0) + 1;
       if (s.loggedOutRetries <= 5) {
         logger.warn(`Session ${sessionId} got 401 (retry ${s.loggedOutRetries}/5) — re-authenticating with saved credentials...`);
@@ -492,6 +512,15 @@ class WhatsAppServiceClass extends EventEmitter {
         session_id: sessionId,
         timestamp: new Date().toISOString(),
       });
+    } else if (isConnectionReplaced) {
+      // Connection replaced by stream conflict — wait 5s to stabilize before reconnecting
+      s.loggedOutRetries = 0;
+      s.status = SESSION_STATUS.RECONNECTING;
+      const sm = getSocketManager();
+      sm.emitToSession(sessionId, 'status', { status: 'reconnecting', sessionId });
+      sm.streamLog(sessionId, 'warn', 'Stream replaced — stabilizing before reconnect...');
+      await SessionService.updateStatus(sessionId, 'reconnecting');
+      await this._scheduleReconnect(sessionId, 5000);
     } else {
       // Reconnect immediately for all other reasons (network drops, server restarts, keepalive timeouts)
       s.loggedOutRetries = 0;
@@ -505,7 +534,7 @@ class WhatsAppServiceClass extends EventEmitter {
       }
       await SessionService.updateStatus(sessionId, 'reconnecting');
 
-      const delay = isRestartRequired ? 1000 : undefined;
+      const delay = isRestartRequired ? 1500 : undefined;
       await this._scheduleReconnect(sessionId, delay);
     }
   }
@@ -566,185 +595,197 @@ class WhatsAppServiceClass extends EventEmitter {
   // ─────────────────────────────────────────────
 
   async _initSession(sessionId) {
-    const sessionPath = path.join(config.session.basePath, sessionId);
-    if (!fs.existsSync(sessionPath)) {
-      fs.mkdirSync(sessionPath, { recursive: true });
+    if (this.initializingSessions.has(sessionId)) {
+      logger.warn(`Session ${sessionId} is already initializing, skipping concurrent call`);
+      return;
     }
+    this.initializingSessions.add(sessionId);
 
-    // Clean up any existing socket/timers for this session first to prevent conflicts
-    const existing = this.sessions.get(sessionId);
-    if (existing) {
-      if (existing.reconnectTimer) {
-        clearTimeout(existing.reconnectTimer);
-        existing.reconnectTimer = null;
-      }
-      if (existing.socket) {
-        try {
-          existing.socket.ev.removeAllListeners();
-          existing.socket.end(undefined);
-        } catch (_) {}
-        existing.socket = null;
-      }
-    }
-
-    const reconnectAttempts = existing?.reconnectAttempts || 0;
-    const loggedOutRetries = existing?.loggedOutRetries || 0;
-
-    // Persist or initialize caches across reconnects
-    const msgRetryCounterCache = existing?.msgRetryCounterCache || new NodeCache({ stdTTL: 3600, checkperiod: 120 });
-    const sentMessagesCache = existing?.sentMessagesCache || new NodeCache({ stdTTL: 86400, maxKeys: 10000 });
-    const store = existing?.store || new InMemoryMessageStore();
-
-    this.sessions.set(sessionId, {
-      socket: null,
-      status: SESSION_STATUS.INITIALIZING,
-      qr: null,
-      info: existing?.info || null,
-      reconnectAttempts,
-      loggedOutRetries,
-      reconnectTimer: null,
-      store,
-      msgRetryCounterCache,
-      sentMessagesCache,
-    });
-
-    getSocketManager().emitToSession(sessionId, 'status', {
-      status: 'initializing',
-      sessionId,
-    });
-
-    // Dynamic import of Baileys
-    let makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, makeInMemoryStore, Browsers;
     try {
-      const baileys = require('@whiskeysockets/baileys');
-      makeWASocket = baileys.default || baileys.makeWASocket;
-      useMultiFileAuthState = baileys.useMultiFileAuthState;
-      fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
-      makeInMemoryStore = baileys.makeInMemoryStore;
-      Browsers = baileys.Browsers;
-    } catch (err) {
-      logger.error('Failed to load @whiskeysockets/baileys:', { error: err.message });
-      throw new Error('Baileys package not found. Run: npm install');
-    }
+      const sessionPath = path.join(config.session.basePath, sessionId);
+      if (!fs.existsSync(sessionPath)) {
+        fs.mkdirSync(sessionPath, { recursive: true });
+      }
 
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-
-    let version = [2, 3000, 1023625842];
-    try {
-      const versionInfo = await fetchLatestBaileysVersion();
-      version = versionInfo.version;
-      logger.debug(`Baileys version: ${version.join('.')}`);
-    } catch (_) {
-      logger.warn('Could not fetch latest Baileys version, using fallback');
-    }
-
-    const silentLogger = require('pino')({ level: 'silent' });
-    const { makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
-
-    // Use standard desktop browser signature
-    const browserConfig = Browsers ? Browsers.windows('Desktop') : ['Windows', 'Chrome', '124.0.6367.82'];
-
-    const socket = makeWASocket({
-      version,
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, silentLogger),
-      },
-      printQRInTerminal: false,
-      logger: silentLogger,
-      browser: browserConfig,
-      generateHighQualityLinkPreview: false,
-      syncFullHistory: false,
-      markOnlineOnConnect: true,
-      connectTimeoutMs: 90_000,
-      defaultQueryTimeoutMs: 90_000,
-      keepAliveIntervalMs: 10_000,
-      emitOwnEvents: true,
-      retryRequestDelayMs: 200,
-      maxMsgRetryCount: 8,
-      msgRetryCounterCache,
-      patchMessageBeforeSending: (msg) => {
-        const requiresPatch = !!(msg.buttonsMessage || msg.templateMessage || msg.listMessage);
-        if (requiresPatch) {
-          msg = {
-            viewOnceMessage: {
-              message: {
-                messageContextInfo: { deviceListMetadataVersion: 2, deviceListMetadata: {} },
-                ...msg,
-              },
-            },
-          };
+      // Clean up any existing socket/timers for this session first to prevent conflicts
+      const existing = this.sessions.get(sessionId);
+      if (existing) {
+        if (existing.reconnectTimer) {
+          clearTimeout(existing.reconnectTimer);
+          existing.reconnectTimer = null;
         }
-        return msg;
-      },
-      getMessage: async (key) => {
-        const msgId = key?.id;
-        const remoteJid = key?.remoteJid;
-        if (!msgId) return undefined;
-
-        // 1. Check in-memory sentMessagesCache (keyed by msgId, remoteJid:id, or cleanPhone:id)
-        if (sentMessagesCache) {
-          const cached = sentMessagesCache.get(msgId) ||
-            (remoteJid ? sentMessagesCache.get(`${remoteJid}:${msgId}`) : null) ||
-            (remoteJid ? sentMessagesCache.get(`${remoteJid.split('@')[0]}:${msgId}`) : null);
-          if (cached) {
-            logger.info(`[getMessage] Resolved from sentMessagesCache for retry: id=${msgId}`);
-            return cached.message || cached;
-          }
-        }
-
-        // 2. Check in-memory store
-        if (store) {
+        if (existing.socket) {
           try {
-            const stored = store.load ? store.load(remoteJid, msgId) : null;
-            if (stored) {
-              logger.info(`[getMessage] Resolved from store for retry: id=${msgId}`);
-              return stored.message || stored;
+            existing.socket.ev.removeAllListeners();
+            if (existing.socket.ws) {
+              existing.socket.ws.removeAllListeners();
+              existing.socket.ws.close();
             }
+            existing.socket.end(undefined);
           } catch (_) {}
+          existing.socket = null;
         }
+      }
 
-        // 3. Persistent Supabase event_logs lookup (survives restarts/redeployments)
-        try {
-          const { getSupabase } = require('../database/connection');
-          const sb = getSupabase();
-          if (sb) {
-            const { data } = await sb.from('event_logs')
-              .select('payload')
-              .eq('message_id', msgId)
-              .maybeSingle();
+      const reconnectAttempts = existing?.reconnectAttempts || 0;
+      const loggedOutRetries = existing?.loggedOutRetries || 0;
 
-            const foundProto = data?.payload?.raw_event?.message ||
-              data?.payload?.message ||
-              data?.payload?.rawMessage;
-            if (foundProto) {
-              logger.info(`[getMessage] Resolved from Supabase event_logs for retry: id=${msgId}`);
-              if (sentMessagesCache) sentMessagesCache.set(msgId, foundProto);
-              return foundProto;
+      // Persist or initialize caches across reconnects
+      const msgRetryCounterCache = existing?.msgRetryCounterCache || new NodeCache({ stdTTL: 3600, checkperiod: 120 });
+      const sentMessagesCache = existing?.sentMessagesCache || new NodeCache({ stdTTL: 86400, maxKeys: 10000 });
+      const store = existing?.store || new InMemoryMessageStore();
+
+      this.sessions.set(sessionId, {
+        socket: null,
+        status: SESSION_STATUS.INITIALIZING,
+        qr: null,
+        info: existing?.info || null,
+        reconnectAttempts,
+        loggedOutRetries,
+        reconnectTimer: null,
+        store,
+        msgRetryCounterCache,
+        sentMessagesCache,
+      });
+
+      getSocketManager().emitToSession(sessionId, 'status', {
+        status: 'initializing',
+        sessionId,
+      });
+
+      // Dynamic import of Baileys
+      let makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, makeInMemoryStore, Browsers;
+      try {
+        const baileys = require('@whiskeysockets/baileys');
+        makeWASocket = baileys.default || baileys.makeWASocket;
+        useMultiFileAuthState = baileys.useMultiFileAuthState;
+        fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+        makeInMemoryStore = baileys.makeInMemoryStore;
+        Browsers = baileys.Browsers;
+      } catch (err) {
+        logger.error('Failed to load @whiskeysockets/baileys:', { error: err.message });
+        throw new Error('Baileys package not found. Run: npm install');
+      }
+
+      const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+
+      let version = [2, 3000, 1023625842];
+      try {
+        const versionInfo = await fetchLatestBaileysVersion();
+        version = versionInfo.version;
+        logger.debug(`Baileys version: ${version.join('.')}`);
+      } catch (_) {
+        logger.warn('Could not fetch latest Baileys version, using fallback');
+      }
+
+      const silentLogger = require('pino')({ level: 'silent' });
+      const { makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+
+      // Standard Ubuntu/Chrome browser signature for maximum multi-device reliability
+      const browserConfig = Browsers ? Browsers.ubuntu('Chrome') : ['Ubuntu', 'Chrome', '22.04.4'];
+
+      const socket = makeWASocket({
+        version,
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys, silentLogger),
+        },
+        printQRInTerminal: false,
+        logger: silentLogger,
+        browser: browserConfig,
+        generateHighQualityLinkPreview: false,
+        syncFullHistory: false,
+        shouldSyncHistoryMessage: () => true,
+        markOnlineOnConnect: true,
+        connectTimeoutMs: 30_000,
+        defaultQueryTimeoutMs: 60_000,
+        keepAliveIntervalMs: 30_000,
+        emitOwnEvents: true,
+        retryRequestDelayMs: 250,
+        maxMsgRetryCount: 5,
+        msgRetryCounterCache,
+        patchMessageBeforeSending: (msg) => {
+          const requiresPatch = !!(msg.buttonsMessage || msg.templateMessage || msg.listMessage);
+          if (requiresPatch) {
+            msg = {
+              viewOnceMessage: {
+                message: {
+                  messageContextInfo: { deviceListMetadataVersion: 2, deviceListMetadata: {} },
+                  ...msg,
+                },
+              },
+            };
+          }
+          return msg;
+        },
+        getMessage: async (key) => {
+          const msgId = key?.id;
+          const remoteJid = key?.remoteJid;
+          if (!msgId) return undefined;
+
+          // 1. Check in-memory sentMessagesCache (keyed by msgId, remoteJid:id, or cleanPhone:id)
+          if (sentMessagesCache) {
+            const cached = sentMessagesCache.get(msgId) ||
+              (remoteJid ? sentMessagesCache.get(`${remoteJid}:${msgId}`) : null) ||
+              (remoteJid ? sentMessagesCache.get(`${remoteJid.split('@')[0]}:${msgId}`) : null);
+            if (cached) {
+              logger.info(`[getMessage] Resolved from sentMessagesCache for retry: id=${msgId}`);
+              return cached.message || cached;
             }
           }
-        } catch (dbErr) {
-          logger.warn(`[getMessage] Database lookup error: ${dbErr.message}`);
-        }
 
-        logger.warn(`[getMessage] Retry requested but message not available: id=${msgId}, jid=${remoteJid}`);
-        // Return undefined: never return an empty conversation object ({ conversation: '' })
-        // because returning empty message content tricks Baileys into sending blank data that permanently
-        // breaks the recipient client's Signal decryption session!
-        return undefined;
-      },
-    });
+          // 2. Check in-memory store
+          if (store) {
+            try {
+              const stored = store.load ? store.load(remoteJid, msgId) : null;
+              if (stored) {
+                logger.info(`[getMessage] Resolved from store for retry: id=${msgId}`);
+                return stored.message || stored;
+              }
+            } catch (_) {}
+          }
 
-    if (store) store.bind(socket.ev);
+          // 3. Persistent Supabase event_logs lookup (survives restarts/redeployments)
+          try {
+            const { getSupabase } = require('../database/connection');
+            const sb = getSupabase();
+            if (sb) {
+              const { data } = await sb.from('event_logs')
+                .select('payload')
+                .eq('message_id', msgId)
+                .maybeSingle();
 
-    const s = this.sessions.get(sessionId);
-    if (!s) return;
-    s.socket = socket;
-    s.store = store;
-    s.status = SESSION_STATUS.CONNECTING;
+              const foundProto = data?.payload?.raw_event?.message ||
+                data?.payload?.message ||
+                data?.payload?.rawMessage;
+              if (foundProto) {
+                logger.info(`[getMessage] Resolved from Supabase event_logs for retry: id=${msgId}`);
+                if (sentMessagesCache) sentMessagesCache.set(msgId, foundProto);
+                return foundProto;
+              }
+            }
+          } catch (dbErr) {
+            logger.warn(`[getMessage] Database lookup error: ${dbErr.message}`);
+          }
 
-    this._registerEventHandlers(socket, sessionId, saveCreds, store);
-    logger.info(`Session ${sessionId} socket created`);
+          logger.warn(`[getMessage] Retry requested but message not available: id=${msgId}, jid=${remoteJid}`);
+          return undefined;
+        },
+      });
+
+      if (store) store.bind(socket.ev);
+
+      const s = this.sessions.get(sessionId);
+      if (!s) return;
+      s.socket = socket;
+      s.store = store;
+      s.status = SESSION_STATUS.CONNECTING;
+
+      this._registerEventHandlers(socket, sessionId, saveCreds, store);
+      logger.info(`Session ${sessionId} socket created`);
+    } finally {
+      this.initializingSessions.delete(sessionId);
+    }
   }
 
   _registerEventHandlers(socket, sessionId, saveCreds, store) {
@@ -762,6 +803,10 @@ class WhatsAppServiceClass extends EventEmitter {
 
     socket.ev.on('messages.upsert', async (data) => {
       await messageHandler.handleUpsert(socket, sessionId, data, store);
+    });
+
+    socket.ev.on('messaging-history.set', async (data) => {
+      await messageHandler.handleHistorySync(socket, sessionId, data, store);
     });
 
     socket.ev.on('messages.update', async (data) => {
@@ -850,6 +895,10 @@ class WhatsAppServiceClass extends EventEmitter {
       if (s.socket) {
         try {
           s.socket.ev.removeAllListeners();
+          if (s.socket.ws) {
+            s.socket.ws.removeAllListeners();
+            s.socket.ws.close();
+          }
           s.socket.end(undefined);
         } catch (_) {}
         s.socket = null;
