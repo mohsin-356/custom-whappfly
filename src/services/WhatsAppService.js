@@ -630,10 +630,10 @@ class WhatsAppServiceClass extends EventEmitter {
       const reconnectAttempts = existing?.reconnectAttempts || 0;
       const loggedOutRetries = existing?.loggedOutRetries || 0;
 
-      // Persist or initialize caches across reconnects
-      const msgRetryCounterCache = existing?.msgRetryCounterCache || new NodeCache({ stdTTL: 3600, checkperiod: 120 });
-      const sentMessagesCache = existing?.sentMessagesCache || new NodeCache({ stdTTL: 86400, maxKeys: 10000 });
-      const store = existing?.store || new InMemoryMessageStore();
+      // Persist or initialize caches across reconnects (optimized limits for 512MB RAM tier)
+      const msgRetryCounterCache = existing?.msgRetryCounterCache || new NodeCache({ stdTTL: 3600, checkperiod: 120, maxKeys: 1000 });
+      const sentMessagesCache = existing?.sentMessagesCache || new NodeCache({ stdTTL: 3600, checkperiod: 120, maxKeys: 1000 });
+      const store = existing?.store || new InMemoryMessageStore(1000);
 
       this.sessions.set(sessionId, {
         socket: null,
@@ -695,7 +695,15 @@ class WhatsAppServiceClass extends EventEmitter {
         browser: browserConfig,
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
-        shouldSyncHistoryMessage: () => true,
+        shouldSyncHistoryMessage: (msg) => {
+          // Recover offline messages from the past 24 hours without loading massive history
+          const ts = msg?.messageTimestamp ? (Number(msg.messageTimestamp) || 0) : 0;
+          if (ts > 0) {
+            const ageSeconds = Math.floor(Date.now() / 1000) - ts;
+            return ageSeconds < 24 * 3600;
+          }
+          return false;
+        },
         markOnlineOnConnect: true,
         connectTimeoutMs: 30_000,
         defaultQueryTimeoutMs: 60_000,

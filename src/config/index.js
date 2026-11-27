@@ -13,7 +13,9 @@ const config = {
 
   supabase: {
     url: process.env.SUPABASE_URL || '',
-    serviceKey: process.env.SUPABASE_SECRET_KEY || '',
+    serviceKey: process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY || '',
+    jwksUrl: process.env.SUPABASE_JWKS_URL || '',
   },
 
   redis: {
@@ -45,7 +47,7 @@ const config = {
 
   media: {
     basePath: path.resolve(process.env.UPLOADS_PATH || './uploads'),
-    maxSize: process.env.MAX_MEDIA_SIZE || '50mb',
+    maxSize: process.env.MAX_MEDIA_SIZE || '10mb',
     tempTTL: parseInt(process.env.MEDIA_TEMP_TTL || '86400', 10),
   },
 

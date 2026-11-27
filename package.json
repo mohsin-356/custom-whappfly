@@ -4,8 +4,8 @@
   "description": "Production-ready WhatsApp Bridge for n8n - WhatsBridge",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "start": "node --expose-gc --max-old-space-size=400 server.js",
+    "dev": "nodemon --expose-gc --max-old-space-size=400 server.js",
     "lint": "eslint src/"
   },
   "keywords": [

@@ -13,6 +13,10 @@ class InMemoryQueue {
   }
 
   async add(data, opts = {}) {
+    // Bound queue length to 1000 to prevent unbounded memory growth if destinations fail
+    if (this.queue.length >= 1000) {
+      this.queue.shift();
+    }
     this.queue.push({ data, opts, addedAt: Date.now() });
     if (!this.running) this._process();
   }

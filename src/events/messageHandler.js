@@ -8,8 +8,8 @@ const { MediaService } = require('../services/MediaService');
 const { normalizeMessage, normalizeReceiptUpdate, getContentType } = require('../utils/payloadNormalizer');
 const EventLog = require('../database/models/EventLog');
 
-// Cache processed message IDs for 24 hours to prevent duplicate webhook dispatches
-const processedMsgCache = new NodeCache({ stdTTL: 86400, checkperiod: 600, maxKeys: 50000 });
+// Cache processed message IDs for 4 hours to prevent duplicate webhook dispatches (memory-safe limit)
+const processedMsgCache = new NodeCache({ stdTTL: 14400, checkperiod: 300, maxKeys: 5000 });
 
 /**
  * Common processor for individual incoming or synced WhatsApp messages
@@ -31,14 +31,14 @@ async function processSingleMessage(socket, sessionId, rawMsg, store, isHistory 
     processedMsgCache.set(dedupKey, true);
   }
 
-  // For history-sync (offline recovered) messages, skip messages older than 7 days
+  // For history-sync (offline recovered) messages, skip messages older than 24 hours
   if (isHistory && rawMsg.messageTimestamp) {
     const ts = typeof rawMsg.messageTimestamp === 'object'
       ? (rawMsg.messageTimestamp?.low || rawMsg.messageTimestamp?.toNumber?.() || 0)
       : (Number(rawMsg.messageTimestamp) || 0);
     if (ts > 0) {
       const ageMs = Date.now() - (ts * 1000);
-      if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+      if (ageMs > 24 * 60 * 60 * 1000) {
         logger.debug(`[messageHandler] Skipping ancient history message: ${messageId}`);
         return;
       }

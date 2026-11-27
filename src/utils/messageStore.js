@@ -1,10 +1,10 @@
 'use strict';
 
 class InMemoryMessageStore {
-  constructor(maxSize = 10000) {
+  constructor(maxSize = 1000) {
     this.maxSize = maxSize;
-    this.messages = new Map(); // id -> message proto
-    this.chats = new Map();    // jid:id -> message proto
+    this.messages = new Map(); // id -> { msg, jid, cleanPhone }
+    this.chats = new Map();    // `${jid}:${id}` -> id
   }
 
   save(webMessage) {
@@ -14,20 +14,36 @@ class InMemoryMessageStore {
     if (!id) return;
 
     const jid = key?.remoteJid || webMessage.remoteJid;
-    // Extract raw message protobuf (proto.IMessage)
     const msg = webMessage.message || webMessage.rawMessage || webMessage;
 
-    if (this.messages.size >= this.maxSize) {
-      const firstKey = this.messages.keys().next().value;
-      this.messages.delete(firstKey);
+    // If already exists, delete old entry to reset order and prevent duplicates
+    if (this.messages.has(id)) {
+      this._deleteEntry(id);
     }
 
-    this.messages.set(id, msg);
+    // Strictly enforce maxSize bounded FIFO/LRU
+    while (this.messages.size >= this.maxSize) {
+      const oldestId = this.messages.keys().next().value;
+      this._deleteEntry(oldestId);
+    }
+
+    const cleanPhone = jid ? jid.split('@')[0] : null;
+    this.messages.set(id, { msg, jid, cleanPhone });
 
     if (jid) {
-      this.chats.set(`${jid}:${id}`, msg);
-      const cleanPhone = jid.split('@')[0];
-      this.chats.set(`${cleanPhone}:${id}`, msg);
+      this.chats.set(`${jid}:${id}`, id);
+      if (cleanPhone) {
+        this.chats.set(`${cleanPhone}:${id}`, id);
+      }
+    }
+  }
+
+  _deleteEntry(id) {
+    const entry = this.messages.get(id);
+    if (entry) {
+      if (entry.jid) this.chats.delete(`${entry.jid}:${id}`);
+      if (entry.cleanPhone) this.chats.delete(`${entry.cleanPhone}:${id}`);
+      this.messages.delete(id);
     }
   }
 
@@ -40,15 +56,17 @@ class InMemoryMessageStore {
     if (!id) return null;
 
     if (this.messages.has(id)) {
-      return this.messages.get(id);
+      return this.messages.get(id).msg;
     }
     if (jid && this.chats.has(`${jid}:${id}`)) {
-      return this.chats.get(`${jid}:${id}`);
+      const actualId = this.chats.get(`${jid}:${id}`);
+      return this.messages.get(actualId)?.msg || null;
     }
     if (jid) {
       const cleanPhone = jid.split('@')[0];
       if (this.chats.has(`${cleanPhone}:${id}`)) {
-        return this.chats.get(`${cleanPhone}:${id}`);
+        const actualId = this.chats.get(`${cleanPhone}:${id}`);
+        return this.messages.get(actualId)?.msg || null;
       }
     }
     return null;

@@ -127,6 +127,20 @@ async function bootstrap() {
       });
     }, cleanupIntervalMs);
     logger.debug(`[MediaCleanup] Scheduled every ${Math.round(cleanupIntervalMs / 60000)} min (TTL=${config.media.tempTTL}s)`);
+
+    // Memory Guard for Render (512MB RAM tier):
+    // Monitors RSS memory every 60s. If RSS exceeds 350MB, triggers GC if available.
+    setInterval(() => {
+      const mem = process.memoryUsage();
+      const rssMB = Math.round(mem.rss / 1024 / 1024);
+      const heapMB = Math.round(mem.heapUsed / 1024 / 1024);
+      if (rssMB > 350) {
+        logger.warn(`[MemoryGuard] High memory detected: RSS=${rssMB}MB, Heap=${heapMB}MB. Invoking garbage collection.`);
+        if (typeof global.gc === 'function') {
+          global.gc();
+        }
+      }
+    }, 60 * 1000);
   });
 
   // 15. Graceful shutdown
